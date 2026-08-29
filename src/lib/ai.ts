@@ -1,15 +1,51 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { q } from "./db";
+import { q, one } from "./db";
+import { decrypt } from "./crypto";
 import { TOOLS, defaultGate } from "./tools";
 import { emptySpec, type AgentSpec } from "./types";
 
 export const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
 
-let client: Anthropic | null = null;
-export function anthropic() {
-  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is not set");
-  client ||= new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  return client;
+export const NO_KEY =
+  "No Anthropic API key is available to this workspace. Add one under Connections, or set ANTHROPIC_API_KEY on the server.";
+
+export type ModelAccess = { apiKey: string; model: string; source: "connection" | "environment" };
+
+/**
+ * Where the model credential comes from, in order: the workspace's own
+ * Anthropic connection, then the server environment. The connection wins so a
+ * workspace can bring its own key and its own model without a redeploy.
+ */
+export async function modelAccess(orgId: string): Promise<ModelAccess> {
+  const row = await one<any>(
+    `select config, secret_enc from connections where org_id = $1 and kind = 'anthropic' limit 1`,
+    [orgId],
+  );
+  const fromConn = row?.secret_enc ? decrypt(row.secret_enc) : "";
+  if (fromConn) {
+    return { apiKey: fromConn, model: row.config?.model?.trim() || MODEL, source: "connection" };
+  }
+  const fromEnv = process.env.ANTHROPIC_API_KEY || "";
+  if (fromEnv) return { apiKey: fromEnv, model: MODEL, source: "environment" };
+  throw new Error(NO_KEY);
+}
+
+// One client per distinct key, so switching the workspace key takes effect at once.
+const clients = new Map<string, Anthropic>();
+export function clientFor(apiKey: string) {
+  if (!apiKey) throw new Error(NO_KEY);
+  let c = clients.get(apiKey);
+  if (!c) {
+    c = new Anthropic({ apiKey });
+    clients.set(apiKey, c);
+  }
+  return c;
+}
+
+/** Resolves the workspace's credential and returns a client bound to it. */
+export async function anthropicFor(orgId: string) {
+  const access = await modelAccess(orgId);
+  return { client: clientFor(access.apiKey), ...access };
 }
 
 export async function audit(
@@ -40,9 +76,11 @@ function extractJSON(text: string) {
  * The spec — never a prompt — is what the user edits and what the runtime executes.
  */
 export async function compileBrief(
+  orgId: string,
   brief: string,
   connections: { id: string; name: string; kind: string; config: any }[],
 ): Promise<AgentSpec> {
+  const { client, model } = await anthropicFor(orgId);
   const connLines = connections.length
     ? connections.map((c) => `- id "${c.id}" · ${c.name} (${c.kind})`).join("\n")
     : "- (none connected yet)";
@@ -76,8 +114,8 @@ SCHEMA
 BRIEF
 ${brief}`;
 
-  const res = await anthropic().messages.create({
-    model: MODEL,
+  const res = await client.messages.create({
+    model,
     max_tokens: 2000,
     messages: [{ role: "user", content: prompt }],
   });

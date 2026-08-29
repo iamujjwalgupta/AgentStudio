@@ -11,6 +11,9 @@ export type ToolContext = {
   userId: string;
   connections: Record<string, ConnRow>; // keyed by connection id
   storageDir: string;
+  /** Model credential for this workspace, resolved by the orchestrator. */
+  apiKey: string;
+  model: string;
 };
 
 export type ConnRow = {
@@ -101,16 +104,16 @@ export const TOOLS: ToolDef[] = [
       properties: { query: { type: "string", description: "What to search for" } },
       required: ["query"],
     },
-    async run({ query }) {
+    async run({ query }, ctx) {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-api-key": process.env.ANTHROPIC_API_KEY || "",
+          "x-api-key": ctx.apiKey,
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: MODEL,
+          model: ctx.model || MODEL,
           max_tokens: 1500,
           tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }],
           messages: [

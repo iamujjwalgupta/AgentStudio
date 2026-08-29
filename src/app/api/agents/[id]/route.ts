@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { q, one } from "@/lib/db";
-import { requireUser } from "@/lib/auth";
+import { requireUser, verifyPassword } from "@/lib/auth";
 import { audit } from "@/lib/ai";
 
 export const runtime = "nodejs";
@@ -36,10 +36,38 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   return NextResponse.json({ agent: row });
 }
 
-export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
+/**
+ * Deleting an agent takes its versions, runs, run steps and approvals with it.
+ * Two gates, both enforced here and not merely hidden in the UI: the caller must
+ * own the workspace, and must re-enter their password.
+ */
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const u = await requireUser();
   const { id } = await params;
+
+  if (!u.isOwner) {
+    return NextResponse.json(
+      { error: "Only the workspace owner can delete an agent." },
+      { status: 403 },
+    );
+  }
+
+  const { password } = await req.json().catch(() => ({ password: "" }));
+  if (!password) return NextResponse.json({ error: "Enter your password to confirm." }, { status: 400 });
+
+  const me = await one<any>(`select password_hash from users where id = $1`, [u.id]);
+  if (!me || !(await verifyPassword(password, me.password_hash))) {
+    // A failed confirmation is itself worth recording.
+    await audit(u.orgId, u, "Failed password confirmation on agent deletion", "agent", id, {});
+    return NextResponse.json({ error: "That password is not correct." }, { status: 403 });
+  }
+
+  const agent = await one<any>(`select name from agents where id = $1 and org_id = $2`, [id, u.orgId]);
+  if (!agent) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const runs = await one<any>(`select count(*)::int as n from runs where agent_id = $1`, [id]);
   await q(`delete from agents where id = $1 and org_id = $2`, [id, u.orgId]);
-  await audit(u.orgId, u, "Deleted agent", "agent", id, {});
-  return NextResponse.json({ ok: true });
+  // Written after the delete so the audit trail outlives the agent it describes.
+  await audit(u.orgId, u, "Deleted agent", "agent", id, { name: agent.name, runsRemoved: runs?.n ?? 0 });
+  return NextResponse.json({ ok: true, name: agent.name });
 }

@@ -1,16 +1,16 @@
-import Link from "next/link";
 import { q } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import NewAgentButton from "@/components/NewAgentButton";
+import AgentList, { type AgentRow } from "@/components/AgentList";
 
 export const dynamic = "force-dynamic";
 
 export default async function AgentsPage() {
   const u = await requireUser();
-  let agents: any[] = [];
+  let agents: AgentRow[] = [];
   let dbError: string | null = null;
   try {
-    agents = await q(
+    agents = await q<AgentRow>(
       `select a.*, (select count(*)::int from runs r where r.agent_id = a.id) as run_count,
               (select max(started_at) from runs r where r.agent_id = a.id) as last_run
        from agents a where a.org_id = $1 order by a.updated_at desc`,
@@ -40,31 +40,7 @@ export default async function AgentsPage() {
           <NewAgentButton />
         </div>
       ) : (
-        <div className="table">
-          <div className="tr th" style={{ gridTemplateColumns: "2.4fr .9fr .9fr .9fr .9fr" }}>
-            <div>Agent</div>
-            <div>Type</div>
-            <div>Domain</div>
-            <div>Status</div>
-            <div>Runs</div>
-          </div>
-          {agents.map((a) => (
-            <Link key={a.id} href={`/agents/${a.id}`} className="tr link" style={{ gridTemplateColumns: "2.4fr .9fr .9fr .9fr .9fr" }}>
-              <div>
-                <div className="name">{a.name}</div>
-                <div className="sub-line">{a.description || "No description yet"}</div>
-              </div>
-              <div><span className="tag">{a.archetype}</span></div>
-              <div className="mono dim">{a.draft_spec?.domain || "—"}</div>
-              <div>
-                <span className={`pill ${a.status === "published" ? "green" : "grey"}`}>
-                  {a.status === "published" ? `v${a.published_ver} live` : "Draft"}
-                </span>
-              </div>
-              <div className="mono dim">{a.run_count}</div>
-            </Link>
-          ))}
-        </div>
+        !dbError && <AgentList agents={agents} canDelete={u.isOwner} />
       )}
     </div>
   );

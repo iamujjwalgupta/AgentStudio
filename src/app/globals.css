@@ -163,6 +163,13 @@ textarea:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .btn-primary:hover:not(:disabled) { background: var(--ink-2); border-color: var(--ink-2); }
 .btn-warn { background: var(--warn); border-color: var(--warn); color: #fff; }
 .btn-warn:hover:not(:disabled) { background: #a30068; border-color: #a30068; }
+
+/* Destructive actions. Deliberately not the magenta, which is reserved for
+   "a human is needed" and would lose its meaning if it also meant "delete". */
+.btn-danger { color: #b02a49; }
+.btn-danger:hover:not(:disabled) { background: #fdecef; border-color: rgba(209,52,91,.4); color: #a3243f; }
+.btn-danger-solid { background: #d1345b; border-color: #d1345b; color: #fff; }
+.btn-danger-solid:hover:not(:disabled) { background: #b02a49; border-color: #b02a49; }
 .btn-ghost { background: none; border-color: transparent; color: var(--link); padding-left: 4px; padding-right: 4px; }
 .btn-ghost:hover:not(:disabled) { background: rgba(0,94,184,.08); }
 .icon-btn {
@@ -193,6 +200,7 @@ textarea:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
   padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line);
   color: var(--muted-2); background: #fff;
+  white-space: nowrap; flex: none;
 }
 .tag-neutral, .pill.static, .tag.static { background: #eef2f8; }
 .pill.green, .tag.green { background: var(--ok-bg); border-color: rgba(0,163,161,.3); color: #007a78; }
@@ -218,6 +226,98 @@ textarea:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .row { display: grid; color: inherit; }
 .row:hover { background: #f7f9fc; }
 .name { font-weight: 550; }
+
+/* ── list / grid toolbar ───────────────────────────────────── */
+
+.list-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 12px;
+}
+.list-head .count {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--muted);
+}
+
+/* ── agent cards ───────────────────────────────────────────── */
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(258px, 1fr)); gap: 14px; }
+
+.card {
+  position: relative; display: flex; flex-direction: column; gap: 9px; min-width: 0;
+  min-height: 168px; padding: 15px 17px 13px;
+  background: var(--panel); border: 1px solid rgba(0,51,141,.15); border-radius: var(--radius);
+  box-shadow: 0 1px 2px rgba(0,51,141,.05), 0 10px 26px -14px rgba(0,51,141,.22);
+  color: inherit; text-decoration: none;
+  transition: border-color .15s, box-shadow .15s, transform .15s;
+}
+.card:hover {
+  border-color: rgba(0,94,184,.42); transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0,51,141,.06), 0 16px 32px -16px rgba(0,51,141,.3);
+}
+/* Same drafting ticks the panels carry, one size down. */
+.card::before {
+  content: ""; position: absolute; top: 6px; left: 6px;
+  width: 7px; height: 7px; opacity: .34; pointer-events: none;
+  border-top: 1px solid var(--ink); border-left: 1px solid var(--ink);
+}
+
+.card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; min-width: 0; padding-right: 2px;
+}
+.card-name { font-weight: 550; line-height: 1.35; }
+.card-desc {
+  margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.card-foot {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: auto; padding-top: 11px; padding-right: 76px;
+  border-top: 1px solid var(--line-soft);
+}
+.card-meta {
+  min-width: 0; flex: 1;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .cards { grid-template-columns: 1fr; }
+}
+
+/* ── row actions and the confirm dialog ────────────────────── */
+
+.agent-row:hover { background: #f7f9fc; }
+.cell-link { display: block; min-width: 0; color: inherit; text-decoration: none; }
+
+/* min-width:0 — grid items default to min-width:auto, which lets content push a
+   track wider than its 1fr share and overflow the row. */
+.card-wrap { position: relative; display: flex; min-width: 0; }
+.card-wrap > .card { flex: 1; }
+/* Row and card actions, shared by both views. */
+.row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.card-actions { position: absolute; bottom: 9px; right: 9px; display: flex; align-items: center; gap: 2px; }
+
+.icon-act, .del-btn {
+  width: 28px; height: 28px; padding: 0; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid transparent; border-radius: 8px;
+  color: var(--muted); cursor: pointer; opacity: .5;
+  transition: opacity .15s, background .15s, color .15s, border-color .15s;
+}
+.agent-row:hover .icon-act, .card-wrap:hover .icon-act { opacity: 1; }
+.icon-act:hover { opacity: 1; background: rgba(0,94,184,.09); border-color: rgba(0,94,184,.28); color: var(--ink); }
+.icon-act:focus-visible { opacity: 1; outline: 2px solid var(--link); outline-offset: 1px; }
+/* Destructive action keeps the danger tint on hover. */
+.del-btn:hover { background: #fdecef; border-color: rgba(209,52,91,.35); color: #b02a49; }
+
+.modal-back {
+  position: fixed; inset: 0; z-index: 50; padding: 20px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10,27,61,.42);
+}
+.modal { width: min(460px, 100%); max-height: 90vh; overflow: auto; }
 
 /* ── segmented control ─────────────────────────────────────── */
 

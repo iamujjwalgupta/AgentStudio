@@ -13,6 +13,15 @@ const KINDS: {
   fields: { key: string; label: string; hint?: string; type?: string }[];
 }[] = [
   {
+    id: "anthropic",
+    label: "Anthropic",
+    blurb:
+      "The API key your agents think with. Needed to compile a brief and to run an agent; without one the rest of the app still works. Overrides the server's key for this workspace.",
+    secretLabel: "API key",
+    secretHint: "sk-ant-…",
+    fields: [{ key: "model", label: "Model", hint: "Leave blank for the workspace default" }],
+  },
+  {
     id: "postgres",
     label: "Database",
     blurb: "Lets an agent run read-only SQL.",
@@ -59,11 +68,13 @@ export default function ConnectionsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [open, setOpen] = useState(false);
-  const [kind, setKind] = useState("postgres");
+  const [kind, setKind] = useState("anthropic");
   const [name, setName] = useState("");
   const [secret, setSecret] = useState("");
   const [config, setConfig] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState("");
+  const [results, setResults] = useState<Record<string, string>>({});
 
   const active = KINDS.find((k) => k.id === kind)!;
 
@@ -108,6 +119,20 @@ export default function ConnectionsPage() {
       setError(e.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function test(id: string) {
+    setTesting(id);
+    setResults({ ...results, [id]: "" });
+    try {
+      const res = await fetch(`/api/connections/${id}`, { method: "POST" });
+      const j = await res.json();
+      setResults({ ...results, [id]: `${j.ok ? "✓" : "✗"} ${j.detail}` });
+    } catch (e: any) {
+      setResults({ ...results, [id]: `✗ ${e.message}` });
+    } finally {
+      setTesting("");
     }
   }
 
@@ -234,9 +259,17 @@ export default function ConnectionsPage() {
                 <span className="tag tag-neutral">{KINDS.find((k) => k.id === c.kind)?.label ?? c.kind}</span>
               </div>
               <div className="sub-line mono">
-                {c.config?.baseUrl || c.config?.host || c.config?.channel || "Credential stored, encrypted"}
+                {results[c.id] ||
+                  c.config?.baseUrl ||
+                  c.config?.host ||
+                  c.config?.channel ||
+                  c.config?.model ||
+                  "Credential stored, encrypted"}
               </div>
-              <div style={{ textAlign: "right" }}>
+              <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                <button className="btn btn-ghost" onClick={() => test(c.id)} disabled={testing === c.id}>
+                  {testing === c.id ? "Testing…" : "Test"}
+                </button>
                 <button className="btn btn-ghost" onClick={() => remove(c.id, c.name)}>Remove</button>
               </div>
             </div>

@@ -13,7 +13,11 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
   const agent = await one<any>(`select * from agents where id = $1 and org_id = $2`, [id, u.orgId]);
   if (!agent) notFound();
 
-  const connections = await q<any>(`select id, name, kind, config from connections where org_id = $1 order by name`, [u.orgId]);
+  // The Anthropic key powers the run itself; it is not a source an agent reads from.
+  const connections = await q<any>(
+    `select id, name, kind, config from connections where org_id = $1 and kind <> 'anthropic' order by name`,
+    [u.orgId],
+  );
   const versions = await q<any>(
     `select v.version, v.note, v.created_at, us.name as by from agent_versions v
      left join users us on us.id = v.created_by where v.agent_id = $1 order by v.version desc`,

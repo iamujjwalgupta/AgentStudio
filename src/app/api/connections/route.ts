@@ -20,6 +20,17 @@ export async function POST(req: Request) {
   const u = await requireUser();
   const { name, kind, config, secret } = await req.json();
   if (!name || !kind) return NextResponse.json({ error: "Give the connection a name and a type." }, { status: 400 });
+
+  if (kind === "anthropic") {
+    if (!secret?.trim()) return NextResponse.json({ error: "Paste the API key." }, { status: 400 });
+    const existing = await one<any>(`select name from connections where org_id = $1 and kind = 'anthropic'`, [u.orgId]);
+    if (existing)
+      return NextResponse.json(
+        { error: `This workspace already has an Anthropic key ("${existing.name}"). Remove it before adding another.` },
+        { status: 409 },
+      );
+  }
+
   const row = await one<any>(
     `insert into connections (org_id, name, kind, config, secret_enc, created_by)
      values ($1,$2,$3,$4,$5,$6) returning id, name, kind, config, created_at`,

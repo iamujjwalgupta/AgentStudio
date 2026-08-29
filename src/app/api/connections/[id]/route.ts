@@ -59,6 +59,22 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       await t.verify();
       return NextResponse.json({ ok: true, detail: `${c.config.host} accepted the credentials` });
     }
+    if (c.kind === "anthropic") {
+      const model = c.config?.model?.trim() || process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-api-key": secret, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model, max_tokens: 4, messages: [{ role: "user", content: "Reply with: ok" }] }),
+        signal: AbortSignal.timeout(20000),
+      });
+      if (res.ok) return NextResponse.json({ ok: true, detail: `Key accepted · ${model} responded` });
+      const body = await res.json().catch(() => ({}));
+      const why = body?.error?.message || `HTTP ${res.status}`;
+      return NextResponse.json({
+        ok: false,
+        detail: res.status === 401 ? "The API key was rejected." : res.status === 404 ? `No such model: ${model}` : why,
+      });
+    }
     return NextResponse.json({ ok: true, detail: "Nothing to test for this type." });
   } catch (e: any) {
     return NextResponse.json({ ok: false, detail: e?.message || String(e) });

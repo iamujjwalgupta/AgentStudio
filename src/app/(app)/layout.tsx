@@ -11,12 +11,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!user) redirect("/login");
 
   let pending = 0;
+  let shares = 0;
   try {
     const r = await q<any>(
       `select count(*)::int as n from approvals where org_id = $1 and status = 'pending'`,
       [user.orgId],
     );
     pending = r[0]?.n ?? 0;
+    const sh = await q<any>(
+      `select count(*)::int as n from agent_shares where to_user_id = $1 and status = 'pending'`,
+      [user.id],
+    );
+    shares = sh[0]?.n ?? 0;
   } catch {
     /* database not reachable yet — the pages will surface it */
   }
@@ -40,19 +46,24 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <span className="nav-code">02</span>
             <span className="nav-label">Connections</span>
           </Link>
+          <Link className="nav-item" href="/shares">
+            <span className="nav-code">03</span>
+            <span className="nav-label">Shares</span>
+            {shares > 0 && <span className="nav-badge">{shares}</span>}
+          </Link>
 
           <div className="eyebrow nav-head bare">Operate</div>
           <Link className="nav-item" href="/approvals">
-            <span className="nav-code">03</span>
+            <span className="nav-code">04</span>
             <span className="nav-label">Approvals</span>
             {pending > 0 && <span className="nav-badge">{pending}</span>}
           </Link>
           <Link className="nav-item" href="/runs">
-            <span className="nav-code">04</span>
+            <span className="nav-code">05</span>
             <span className="nav-label">Runs</span>
           </Link>
           <Link className="nav-item" href="/audit">
-            <span className="nav-code">05</span>
+            <span className="nav-code">06</span>
             <span className="nav-label">Audit trail</span>
           </Link>
         </nav>

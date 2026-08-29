@@ -18,18 +18,37 @@ create table if not exists users (
   created_at    timestamptz not null default now()
 );
 
+-- The workspace owner: the account that created it. Distinct from the 'admin'
+-- role, of which there may eventually be several. Only the owner may delete an
+-- agent. Backfilled to the earliest admin, else the earliest member.
+alter table orgs add column if not exists owner_id uuid references users(id);
+update orgs o set owner_id = (
+  select u.id from users u where u.org_id = o.id
+   order by (u.role = 'admin') desc, u.created_at asc limit 1
+) where o.owner_id is null;
+
 -- Connections are provisioned once and referenced by agents. Secrets are
 -- encrypted at rest with APP_SECRET and never returned to the browser.
 create table if not exists connections (
   id          uuid primary key default gen_random_uuid(),
   org_id      uuid not null references orgs(id) on delete cascade,
   name        text not null,
-  kind        text not null check (kind in ('postgres','http','smtp','slack','files')),
+  kind        text not null check (kind in ('postgres','http','smtp','slack','files','anthropic')),
   config      jsonb not null default '{}'::jsonb,
   secret_enc  text,
   created_by  uuid references users(id),
   created_at  timestamptz not null default now()
 );
+
+-- Widen the kind constraint on databases created before 'anthropic' existed.
+-- Drop-then-add in one statement pair, so re-running is safe.
+alter table connections drop constraint if exists connections_kind_check;
+alter table connections add constraint connections_kind_check
+  check (kind in ('postgres','http','smtp','slack','files','anthropic'));
+
+-- One model key per workspace: the runtime must never have to choose between two.
+create unique index if not exists uniq_conn_anthropic_per_org
+  on connections (org_id) where kind = 'anthropic';
 
 create table if not exists agents (
   id              uuid primary key default gen_random_uuid(),
@@ -103,6 +122,37 @@ create table if not exists approvals (
   decided_at   timestamptz,
   created_at   timestamptz not null default now()
 );
+
+-- Agents sent to a user in another workspace. The spec is snapshotted at send
+-- time, so the offer is unaffected by later edits to the source agent, and
+-- survives its deletion. Nothing enters the recipient's workspace until they
+-- accept; on accept the spec is copied with its sources stripped, because
+-- connection ids are meaningless outside the workspace that owns them.
+create table if not exists agent_shares (
+  id                uuid primary key default gen_random_uuid(),
+  agent_id          uuid references agents(id) on delete set null,
+  agent_name        text not null,
+  spec              jsonb not null,
+  source_version    int,
+  from_org_id       uuid not null references orgs(id) on delete cascade,
+  from_user_id      uuid references users(id) on delete set null,
+  from_user_name    text not null default '',
+  from_org_name     text not null default '',
+  to_user_id        uuid not null references users(id) on delete cascade,
+  to_org_id         uuid not null references orgs(id) on delete cascade,
+  note              text not null default '',
+  status            text not null default 'pending'
+                    check (status in ('pending','accepted','declined','revoked')),
+  accepted_agent_id uuid references agents(id) on delete set null,
+  created_at        timestamptz not null default now(),
+  decided_at        timestamptz
+);
+
+-- The same agent cannot be offered to the same person twice while one offer stands.
+create unique index if not exists uniq_share_pending
+  on agent_shares (agent_id, to_user_id) where status = 'pending';
+create index if not exists idx_shares_in on agent_shares (to_user_id, status, created_at desc);
+create index if not exists idx_shares_out on agent_shares (from_org_id, created_at desc);
 
 -- Append-only. No update or delete path exists in the application.
 create table if not exists audit_events (

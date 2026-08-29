@@ -29,6 +29,8 @@ export async function POST(req: Request) {
       `insert into users (org_id, email, name, password_hash, role) values ($1,$2,$3,$4,'admin') returning id`,
       [orgRow.id, email.toLowerCase(), name || email.split("@")[0], await hashPassword(password)],
     );
+    // The account that creates the workspace owns it.
+    await q(`update orgs set owner_id = $2 where id = $1`, [orgRow.id, user.id]);
     await createSession(user.id);
     await audit(orgRow.id, { id: user.id, name: name || email }, "Created workspace", "org", orgRow.id, {});
     return NextResponse.json({ ok: true });

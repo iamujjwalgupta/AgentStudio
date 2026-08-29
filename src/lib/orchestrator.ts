@@ -1,6 +1,6 @@
 import path from "path";
 import { q, one } from "./db";
-import { anthropic, MODEL, buildSystemPrompt, audit } from "./ai";
+import { anthropicFor, buildSystemPrompt, audit } from "./ai";
 import { TOOLS, toolById, anthropicTools, type ConnRow, type ToolContext } from "./tools";
 import type { AgentSpec } from "./types";
 
@@ -16,14 +16,19 @@ type RunRow = {
   started_by: string;
 };
 
-async function loadContext(orgId: string, userId: string, spec: AgentSpec): Promise<ToolContext> {
+async function loadContext(
+  orgId: string,
+  userId: string,
+  spec: AgentSpec,
+  model: { apiKey: string; model: string },
+): Promise<ToolContext> {
   const ids = spec.sources.map((s) => s.connectionId);
   const rows = ids.length
     ? await q<ConnRow>(`select id, name, kind, config, secret_enc from connections where org_id = $1 and id = any($2::uuid[])`, [orgId, ids])
     : [];
   const connections: Record<string, ConnRow> = {};
   for (const r of rows) connections[r.id] = r;
-  return { orgId, userId, connections, storageDir: STORAGE };
+  return { orgId, userId, connections, storageDir: STORAGE, apiKey: model.apiKey, model: model.model };
 }
 
 async function addStep(runId: string, idx: number, s: Partial<any>) {
@@ -84,7 +89,9 @@ export async function advance(runId: string, user: { id: string; name: string })
   if (run.status !== "running") return;
 
   const spec = run.spec;
-  const ctx = await loadContext(run.org_id, run.started_by || user.id, spec);
+  // Resolved once per advance, so a key changed mid-run is picked up on resume.
+  const { client, model, apiKey } = await anthropicFor(run.org_id);
+  const ctx = await loadContext(run.org_id, run.started_by || user.id, spec, { apiKey, model });
   const connectionNames: Record<string, string> = {};
   for (const c of Object.values(ctx.connections)) connectionNames[c.id] = c.name;
 
@@ -105,8 +112,8 @@ export async function advance(runId: string, user: { id: string; name: string })
       }
 
       const t0 = Date.now();
-      const res: any = await anthropic().messages.create({
-        model: MODEL,
+      const res: any = await client.messages.create({
+        model,
         max_tokens: 4000,
         system,
         messages,
@@ -222,7 +229,8 @@ export async function resumeAfterApprovals(runId: string, user: { id: string; na
     `select * from approvals where run_id = $1 order by created_at asc`,
     [runId],
   );
-  const ctx = await loadContext(run.org_id, run.started_by || user.id, run.spec);
+  const { model, apiKey } = await anthropicFor(run.org_id);
+  const ctx = await loadContext(run.org_id, run.started_by || user.id, run.spec, { apiKey, model });
   const results = [...(run.state.partial || [])];
   const handled = new Set(results.map((r: any) => r.tool_use_id));
 

@@ -13,6 +13,8 @@ export type SessionUser = {
   role: string;
   orgId: string;
   orgName: string;
+  /** True only for the account that created the workspace. */
+  isOwner: boolean;
 };
 
 export async function hashPassword(pw: string) {
@@ -48,7 +50,7 @@ export async function getUser(): Promise<SessionUser | null> {
   try {
     const { payload } = await jwtVerify(token, secret);
     const row = await one<any>(
-      `select u.id, u.email, u.name, u.role, u.org_id, o.name as org_name
+      `select u.id, u.email, u.name, u.role, u.org_id, o.name as org_name, o.owner_id
          from users u join orgs o on o.id = u.org_id
         where u.id = $1`,
       [String(payload.sub)]
@@ -61,6 +63,7 @@ export async function getUser(): Promise<SessionUser | null> {
       role: row.role,
       orgId: row.org_id,
       orgName: row.org_name,
+      isOwner: row.owner_id === row.id,
     };
   } catch {
     return null;
