@@ -23,6 +23,11 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
      left join users us on us.id = v.created_by where v.agent_id = $1 order by v.version desc`,
     [id],
   );
+  // The live spec, so the Review step can show what publishing would change —
+  // computed against the editor's in-memory spec, not the saved draft.
+  const published = agent.published_ver
+    ? await one<any>(`select spec from agent_versions where agent_id = $1 and version = $2`, [id, agent.published_ver])
+    : null;
   const runs = await q<any>(
     `select id, status, started_at, input from runs where agent_id = $1 order by started_at desc limit 20`,
     [id],
@@ -38,6 +43,9 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
       connections={connections}
       versions={versions}
       runs={runs}
+      timezone={u.timezone}
+      publishedSpec={published?.spec ?? null}
+      canPublish={u.canPublish}
     />
   );
 }

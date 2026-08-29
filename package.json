@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "db:setup": "node --env-file=.env scripts/setup-db.mjs"
+    "db:setup": "node --env-file-if-exists=.env scripts/setup-db.mjs",
+    "scheduler": "node --env-file-if-exists=.env scripts/scheduler.mjs",
+    "arm-schedules": "node --env-file-if-exists=.env scripts/arm-schedules.mjs",
+    "seed-agents": "node --env-file-if-exists=.env scripts/seed-agents.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
@@ -32,6 +35,10 @@
     "@types/pg": "^8.11.10",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "esbuild": "^0.28.2",
     "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=22.9"
   }
 }

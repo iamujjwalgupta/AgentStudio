@@ -3,6 +3,7 @@ import { one } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { audit } from "@/lib/ai";
 import { toolById } from "@/lib/tools";
+import { syncAgentSchedule } from "@/lib/agent-schedule";
 import type { AgentSpec } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -26,6 +27,14 @@ function validate(spec: AgentSpec) {
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const u = await requireUser();
   const { id } = await params;
+
+  if (!u.canPublish) {
+    return NextResponse.json(
+      { error: "Only the workspace owner and admins can publish an agent." },
+      { status: 403 },
+    );
+  }
+
   const { note } = await req.json().catch(() => ({ note: "" }));
   const agent = await one<any>(`select * from agents where id = $1 and org_id = $2`, [id, u.orgId]);
   if (!agent) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -43,6 +52,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     `update agents set status = 'published', published_ver = $2, updated_at = now() where id = $1 returning *`,
     [id, next],
   );
-  await audit(u.orgId, u, "Published agent", "agent", id, { version: next, name: agent.name });
-  return NextResponse.json({ agent: updated, version: next });
+  // Publishing is what arms a schedule; the published spec is what will run.
+  const sched = await syncAgentSchedule(id);
+  await audit(u.orgId, u, "Published agent", "agent", id, {
+    version: next,
+    name: agent.name,
+    ...(sched.next ? { nextRun: sched.next.toISOString() } : {}),
+  });
+  return NextResponse.json({ agent: updated, version: next, schedule: sched });
 }

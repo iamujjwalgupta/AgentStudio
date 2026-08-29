@@ -3,6 +3,8 @@ import Link from "next/link";
 import { getUser } from "@/lib/auth";
 import { q } from "@/lib/db";
 import SignOut from "@/components/SignOut";
+import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
+import InviteBanner from "@/components/InviteBanner";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +36,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <span className="brand-mark" />
           <div className="brand-name">Agent Studio</div>
           <div className="eyebrow">{user.orgName}</div>
+          <WorkspaceSwitcher memberships={user.memberships} activeOrgId={user.orgId} />
         </div>
 
         <nav className="nav">
@@ -51,19 +54,29 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <span className="nav-label">Shares</span>
             {shares > 0 && <span className="nav-badge">{shares}</span>}
           </Link>
+          {user.canManageMembers && (
+            <Link className="nav-item" href="/members">
+              <span className="nav-code">04</span>
+              <span className="nav-label">Members</span>
+            </Link>
+          )}
 
           <div className="eyebrow nav-head bare">Operate</div>
           <Link className="nav-item" href="/approvals">
-            <span className="nav-code">04</span>
+            <span className="nav-code">05</span>
             <span className="nav-label">Approvals</span>
             {pending > 0 && <span className="nav-badge">{pending}</span>}
           </Link>
           <Link className="nav-item" href="/runs">
-            <span className="nav-code">05</span>
+            <span className="nav-code">06</span>
             <span className="nav-label">Runs</span>
           </Link>
+          <Link className="nav-item" href="/spend">
+            <span className="nav-code">07</span>
+            <span className="nav-label">Spend</span>
+          </Link>
           <Link className="nav-item" href="/audit">
-            <span className="nav-code">06</span>
+            <span className="nav-code">08</span>
             <span className="nav-label">Audit trail</span>
           </Link>
         </nav>
@@ -75,7 +88,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <SignOut />
         </div>
       </aside>
-      <main className="main">{children}</main>
+      <main className="main">
+        <InviteBanner />
+        {children}
+      </main>
     </div>
   );
 }

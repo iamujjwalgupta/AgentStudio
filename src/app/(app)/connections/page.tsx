@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import NotificationSettings from "@/components/NotificationSettings";
 
 type Conn = { id: string; name: string; kind: string; config: any; created_at: string };
 
@@ -276,6 +277,7 @@ export default function ConnectionsPage() {
           ))}
         </div>
       )}
+      <NotificationSettings />
     </div>
   );
 }

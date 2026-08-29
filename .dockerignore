@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+.env
+.env.*
+storage
+*.tsbuildinfo
+npm-debug.log*
+README.md
+agent-studio-README.md

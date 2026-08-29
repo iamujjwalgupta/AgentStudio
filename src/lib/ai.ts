@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { q, one } from "./db";
 import { decrypt } from "./crypto";
 import { TOOLS, defaultGate } from "./tools";
-import { emptySpec, type AgentSpec } from "./types";
+import { emptySpec, normaliseInputs, type AgentSpec, type SpecInput } from "./types";
 
 export const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
 
@@ -148,6 +148,23 @@ ${brief}`;
   };
 }
 
+/** The inputs this agent expects. Derived from the spec, so it stays deterministic. */
+function inputsBlock(spec: AgentSpec): string {
+  const inputs = normaliseInputs(spec.inputs as any[]);
+  if (!inputs.length) return "";
+  const lines = inputs.map((i) => {
+    const kind = i.type === "file" ? "a document, read it with the document tool by the name given" : i.type;
+    return `- ${i.label} (${kind})${i.hint ? ` — ${i.hint}` : ""}`;
+  });
+  return [
+    `INPUTS`,
+    `These are supplied with the request. Their values appear in the first message.`,
+    lines.join("\n"),
+    `If a value you need is missing, say which one and stop — do not invent it.`,
+    ``,
+  ].join("\n");
+}
+
 /** Deterministic. The same spec always produces the same system prompt. */
 export function buildSystemPrompt(spec: AgentSpec, connectionNames: Record<string, string>) {
   const sources = spec.sources
@@ -165,6 +182,9 @@ export function buildSystemPrompt(spec: AgentSpec, connectionNames: Record<strin
     spec.steps.map((s, i) => `${i + 1}. ${s}`).join("\n") || "1. Answer the user's request.",
     ``,
     sources ? `APPROVED SOURCES\n${sources}\n` : "",
+    // Declared inputs belong in the prompt: without them the agent does not know
+    // what it was meant to be given, and improvises a request for it instead.
+    inputsBlock(spec),
     `DELIVERABLE`,
     `Format: ${spec.output.format}.${spec.output.instructions ? ` ${spec.output.instructions}` : ""}`,
     `When you have finished, write the deliverable as your final message. Do not describe what you would do — do it.`,

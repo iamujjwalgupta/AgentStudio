@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const { action, email, password, name, org } = body || {};
+  const { action, email, password, name, org, invite } = body || {};
 
   if (action === "logout") {
     await destroySession();
@@ -24,15 +24,54 @@ export async function POST(req: Request) {
     if (String(password).length < 8)
       return NextResponse.json({ error: "Use a password of at least 8 characters." }, { status: 400 });
 
-    const orgRow = await one<any>(`insert into orgs (name) values ($1) returning id`, [org || `${name || email}'s workspace`]);
+    const addr = email.toLowerCase();
+
+    // An invitation means joining an existing workspace rather than starting one.
+    const inv = invite
+      ? await one<any>(
+          `select i.*, o.name as org_name from invitations i join orgs o on o.id = i.org_id
+            where i.token = $1 and i.status = 'pending' and i.expires_at > now()`,
+          [invite],
+        )
+      : null;
+    if (invite && !inv) {
+      return NextResponse.json({ error: "That invitation is no longer valid. Ask for a new one." }, { status: 400 });
+    }
+    if (inv && inv.email.toLowerCase() !== addr) {
+      return NextResponse.json(
+        { error: `That invitation was sent to ${inv.email}. Sign up with that address.` },
+        { status: 400 },
+      );
+    }
+
+    const orgId = inv
+      ? inv.org_id
+      : (await one<any>(`insert into orgs (name) values ($1) returning id`, [org || `${name || email}'s workspace`])).id;
+
     const user = await one<any>(
-      `insert into users (org_id, email, name, password_hash, role) values ($1,$2,$3,$4,'admin') returning id`,
-      [orgRow.id, email.toLowerCase(), name || email.split("@")[0], await hashPassword(password)],
+      `insert into users (org_id, active_org_id, email, name, password_hash, role) values ($1,$1,$2,$3,$4,$5) returning id`,
+      [orgId, addr, name || email.split("@")[0], await hashPassword(password), inv ? inv.role : "admin"],
     );
+    await q(`insert into memberships (user_id, org_id, role) values ($1,$2,$3)`, [
+      user.id,
+      orgId,
+      inv ? inv.role : "admin",
+    ]);
+
+    if (inv) {
+      await q(`update invitations set status='accepted', accepted_at=now(), accepted_by=$2 where id=$1`, [inv.id, user.id]);
+      await createSession(user.id);
+      await audit(orgId, { id: user.id, name: name || email }, "Joined workspace", "user", user.id, {
+        role: inv.role,
+        invitedBy: inv.invited_by_name,
+      });
+      return NextResponse.json({ ok: true, joined: inv.org_name });
+    }
+
     // The account that creates the workspace owns it.
-    await q(`update orgs set owner_id = $2 where id = $1`, [orgRow.id, user.id]);
+    await q(`update orgs set owner_id = $2 where id = $1`, [orgId, user.id]);
     await createSession(user.id);
-    await audit(orgRow.id, { id: user.id, name: name || email }, "Created workspace", "org", orgRow.id, {});
+    await audit(orgId, { id: user.id, name: name || email }, "Created workspace", "org", orgId, {});
     return NextResponse.json({ ok: true });
   }
 

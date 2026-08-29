@@ -3,7 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ARCHETYPES, type AgentSpec } from "@/lib/types";
+import { ARCHETYPES, INPUT_TYPES, inputKey, normaliseInputs, type AgentSpec, type SpecInput } from "@/lib/types";
+import { formatDate, formatDateTime } from "@/lib/format";
+import VersionDiff, { DiffView } from "@/components/VersionDiff";
+import { diffSpecs } from "@/lib/spec-diff";
 
 type ToolInfo = { id: string; label: string; description: string; risk: "low" | "medium" | "high"; needs: string | null };
 type Conn = { id: string; name: string; kind: string; config: any };
@@ -27,6 +30,9 @@ export default function Builder({
   connections,
   versions,
   runs,
+  timezone,
+  publishedSpec,
+  canPublish,
 }: {
   agentId: string;
   initialSpec: AgentSpec;
@@ -36,6 +42,9 @@ export default function Builder({
   connections: Conn[];
   versions: any[];
   runs: any[];
+  timezone: string;
+  publishedSpec: AgentSpec | null;
+  canPublish: boolean;
 }) {
   const router = useRouter();
   const [spec, setSpec] = useState<AgentSpec>(initialSpec);
@@ -44,6 +53,7 @@ export default function Builder({
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [runInput, setRunInput] = useState("");
+  const [compare, setCompare] = useState<number | null>(null);
 
   const set = (patch: Partial<AgentSpec>) => setSpec((s) => ({ ...s, ...patch }));
   const toolOf = (id: string) => tools.find((t) => t.id === id);
@@ -79,7 +89,7 @@ export default function Builder({
     router.refresh();
   };
 
-  const run = async (useDraft: boolean) => {
+  const run = async (useDraft: boolean, dryRun = false) => {
     setBusy("run");
     await fetch(`/api/agents/${agentId}`, {
       method: "PATCH",
@@ -89,7 +99,7 @@ export default function Builder({
     const res = await fetch("/api/runs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agentId, input: runInput, useDraft }),
+      body: JSON.stringify({ agentId, input: runInput, useDraft, dryRun }),
     });
     const data = await res.json();
     setBusy(null);
@@ -118,7 +128,12 @@ export default function Builder({
           <button className="btn" onClick={save} disabled={busy === "save"}>
             Save draft
           </button>
-          <button className="btn primary" onClick={publish} disabled={busy === "publish"}>
+          <button
+            className="btn primary"
+            onClick={publish}
+            disabled={busy === "publish" || !canPublish}
+            title={canPublish ? undefined : "Only the workspace owner and admins can publish"}
+          >
             {busy === "publish" && <span className="spin" />}Publish
           </button>
         </div>
@@ -160,10 +175,14 @@ export default function Builder({
                 spec={spec}
                 tools={tools}
                 connections={connections}
+                publishedSpec={publishedSpec}
+                publishedVer={publishedVer}
+                canPublish={canPublish}
                 onPublish={publish}
                 runInput={runInput}
                 setRunInput={setRunInput}
                 onRun={() => run(true)}
+                onRehearse={() => run(true, true)}
                 busy={busy}
               />
             )}
@@ -217,7 +236,7 @@ export default function Builder({
             <div className="table mt">
               {runs.map((r) => (
                 <Link key={r.id} href={`/runs/${r.id}`} className="tr link" style={{ gridTemplateColumns: "1fr 1fr 2fr" }}>
-                  <div className="mono dim">{new Date(r.started_at).toLocaleString()}</div>
+                  <div className="mono dim">{formatDateTime(r.started_at, timezone)}</div>
                   <div>
                     <StatusPill status={r.status} />
                   </div>
@@ -242,9 +261,27 @@ export default function Builder({
                     <strong className="mono">v{v.version}</strong>
                     {v.version === publishedVer && <span className="pill green">Live</span>}
                   </div>
-                  <div>{v.note}</div>
+                  <div>
+                    {v.note}
+                    {v.version > 1 && (
+                      <button
+                        className="link-btn"
+                        onClick={() => setCompare(compare === v.version ? null : v.version)}
+                      >
+                        {compare === v.version ? "hide changes" : `what changed from v${v.version - 1}`}
+                      </button>
+                    )}
+                    {compare === v.version && (
+                      <VersionDiff
+                        agentId={agentId}
+                        from={String(v.version - 1)}
+                        to={String(v.version)}
+                        title={`v${v.version - 1} → v${v.version}`}
+                      />
+                    )}
+                  </div>
                   <div className="mono dim">
-                    {v.by} · {new Date(v.created_at).toLocaleDateString()}
+                    {v.by} · {formatDate(v.created_at, timezone)}
                   </div>
                 </div>
               ))}
@@ -383,6 +420,13 @@ function Data({
   connections: Conn[];
   tools: ToolInfo[];
 }) {
+  const inputs = normaliseInputs(spec.inputs as any[]);
+  const setInput = (idx: number, patch: Partial<SpecInput>) =>
+    set({ inputs: inputs.map((i, n) => (n === idx ? { ...i, ...patch } : i)) });
+  const addInput = () =>
+    set({ inputs: [...inputs, { key: `input_${inputs.length + 1}`, label: "", hint: "", type: "text", required: false }] });
+  const removeInput = (idx: number) => set({ inputs: inputs.filter((_, n) => n !== idx) });
+
   const toggle = (c: Conn) => {
     const on = spec.sources.some((s) => s.connectionId === c.id);
     set({
@@ -432,6 +476,81 @@ function Data({
           The tools you granted need a {missing.join(" and ")} connection. Select one above or remove those tools.
         </div>
       )}
+
+      {/* What the person is asked for each time it runs — the other half of "data". */}
+      <div className="mt">
+        <h3 style={{ fontSize: 15, margin: "18px 0 2px" }}>What to ask for at run time</h3>
+        <p className="help">
+          Each of these becomes a field on the run form. Use a file for anything the agent reads — a ledger, a
+          statement, a contract.
+        </p>
+
+        {inputs.length === 0 && <div className="note">Nothing is asked for. This agent runs on what it already has.</div>}
+
+        <div className="stack">
+          {inputs.map((i, idx) => (
+            <div className="panel input-row" key={idx}>
+              <div className="grid2">
+                <label className="field">
+                  <span className="eyebrow">Label</span>
+                  <input
+                    className="input"
+                    value={i.label}
+                    placeholder="Payables listing"
+                    onChange={(e) => setInput(idx, { label: e.target.value, key: inputKey(e.target.value, idx) })}
+                  />
+                </label>
+                <label className="field">
+                  <span className="eyebrow">Kind</span>
+                  <select
+                    className="input"
+                    value={i.type}
+                    onChange={(e) => setInput(idx, { type: e.target.value as SpecInput["type"] })}
+                  >
+                    {INPUT_TYPES.map((t) => (
+                      <option key={t.id} value={t.id}>{t.label} — {t.blurb}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <label className="field mt-s">
+                <span className="eyebrow">Hint</span>
+                <input
+                  className="input"
+                  value={i.hint}
+                  placeholder="What good input looks like"
+                  onChange={(e) => setInput(idx, { hint: e.target.value })}
+                />
+              </label>
+              {i.type === "choice" && (
+                <label className="field mt-s">
+                  <span className="eyebrow">Choices, comma separated</span>
+                  <input
+                    className="input"
+                    value={(i.options ?? []).join(", ")}
+                    placeholder="Monthly, Quarterly, Annual"
+                    onChange={(e) => setInput(idx, { options: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })}
+                  />
+                </label>
+              )}
+              <div className="row mt-s" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <label className="row" style={{ gap: 8, alignItems: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={i.required}
+                    onChange={(e) => setInput(idx, { required: e.target.checked })}
+                  />
+                  <span className="sub-line">Required — the run will not start without it</span>
+                </label>
+                <button className="btn btn-ghost btn-danger" onClick={() => removeInput(idx)}>Remove</button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <button className="btn mt" onClick={addInput}>Add something to ask for</button>
+      </div>
+
     </div>
   );
 }
@@ -590,6 +709,26 @@ function Trigger({ spec, set }: { spec: AgentSpec; set: (p: Partial<AgentSpec>) 
           />
         </label>
       )}
+      {spec.trigger.type === "schedule" && (
+        <label className="field mt">
+          <span className="eyebrow">Standing input</span>
+          <textarea
+            className="textarea"
+            rows={3}
+            placeholder="What the agent should be told each time it runs on its own"
+            value={spec.trigger.input || ""}
+            onChange={(e) => set({ trigger: { ...spec.trigger, input: e.target.value } })}
+          />
+          <span className="help" style={{ marginTop: 6 }}>
+            {spec.inputs.length
+              ? `This agent asks for ${spec.inputs.length} input${spec.inputs.length === 1 ? "" : "s"} (${spec.inputs
+                  .map((i) => i.label)
+                  .join(", ")}). Nobody is at the keyboard on a schedule, so supply them here or the run will stop and ask.`
+              : "Optional. Nobody is at the keyboard on a schedule, so anything the agent needs to be told goes here."}
+          </span>
+        </label>
+      )}
+
       {spec.trigger.type === "event" && (
         <label className="field mt">
           <span className="eyebrow">Condition</span>
@@ -651,19 +790,27 @@ function Review({
   spec,
   tools,
   connections,
+  publishedSpec,
+  publishedVer,
+  canPublish,
   onPublish,
   runInput,
   setRunInput,
   onRun,
+  onRehearse,
   busy,
 }: {
   spec: AgentSpec;
   tools: ToolInfo[];
   connections: Conn[];
+  publishedSpec: AgentSpec | null;
+  publishedVer: number | null;
+  canPublish: boolean;
   onPublish: () => void;
   runInput: string;
   setRunInput: (v: string) => void;
   onRun: () => void;
+  onRehearse: () => void;
   busy: string | null;
 }) {
   const checks = [
@@ -685,6 +832,16 @@ function Review({
   ];
   const failing = checks.filter((c) => !c.ok).length;
 
+  // Diffed against the spec in the editor, so unsaved edits are included —
+  // publishing saves the draft first, so this is exactly what would go live.
+  const diff = publishedSpec
+    ? {
+        ...diffSpecs(publishedSpec, spec, (id) => tools.find((t) => t.id === id)?.risk ?? "low"),
+        from: `v${publishedVer}`,
+        to: "this draft",
+      }
+    : null;
+
   const rows: [string, string][] = [
     ["Purpose", spec.purpose],
     ["Sources", spec.sources.map((s) => connections.find((c) => c.id === s.connectionId)?.name || s.connectionId).join(" · ") || "None"],
@@ -703,6 +860,7 @@ function Review({
   return (
     <div>
       <h2>Review and publish</h2>
+      {diff && <DiffView diff={diff} title={`What changes from v${publishedVer} to this draft`} />}
       <div className="table" style={{ marginTop: 12 }}>
         {rows.map(([label, value]) => (
           <div key={label} className="sum-row">
@@ -730,13 +888,29 @@ function Review({
           value={runInput}
           onChange={(e) => setRunInput(e.target.value)}
         />
-        <button className="btn" onClick={onRun} disabled={busy === "run"}>
-          {busy === "run" && <span className="spin" />}Test it first
+        <button className="btn" onClick={onRehearse} disabled={busy === "run"} title="Runs it, but describes consequential actions instead of carrying them out">
+          {busy === "run" && <span className="spin" />}Rehearse
         </button>
-        <button className="btn primary" onClick={onPublish} disabled={failing > 0 || busy === "publish"}>
+        <button className="btn" onClick={onRun} disabled={busy === "run"}>
+          Test for real
+        </button>
+        <button
+          className="btn primary"
+          onClick={onPublish}
+          disabled={failing > 0 || busy === "publish" || !canPublish}
+        >
           Publish
         </button>
+        {!canPublish && (
+          <span className="dim">
+            Only the workspace owner and admins can publish. Everything else here is yours to change — save the
+            draft and ask one of them to review it.
+          </span>
+        )}
         {failing > 0 && <span className="dim">{failing} check{failing > 1 ? "s" : ""} still failing.</span>}
+        <span className="dim">
+          A rehearsal runs the agent but describes gated actions rather than carrying them out.
+        </span>
       </div>
     </div>
   );

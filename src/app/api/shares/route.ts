@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { q, one } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { audit } from "@/lib/ai";
+import { notify } from "@/lib/notify";
 import type { AgentSpec } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -108,6 +109,19 @@ export async function POST(req: Request) {
     agent: agent.name,
     from: u.email,
     fromWorkspace: u.orgName,
+  });
+
+  // Sent to the recipient's own workspace, since that is where they will accept it.
+  await notify(to.org_id, {
+    event: "share_received",
+    entityId: share.id,
+    to: [to.email],
+    subject: `${u.name} shared an agent with you`,
+    body:
+      `${u.name} (${u.orgName}) sent you the agent "${agent.name}".\n\n` +
+      (note ? `They said: ${note}\n\n` : "") +
+      `It is waiting under Shares. Accepting copies it into your workspace as a draft; ` +
+      `its connections are not included, so you grant your own before publishing.`,
   });
 
   return NextResponse.json({ ok: true, id: share.id, to: { name: to.name, org: to.org_name } });

@@ -22,8 +22,6 @@
   --muted-2: #2c4372;
   --line: rgba(0, 51, 141, 0.16);
   --line-soft: rgba(0, 51, 141, 0.09);
-  --grid: rgba(0, 94, 184, 0.05);
-  --grid-dark: rgba(148, 188, 227, 0.07);
   --radius: 14px;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -71,12 +69,6 @@ textarea:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   background: var(--ink); color: #fff;
   display: flex; flex-direction: column; padding: 16px 0;
 }
-.rail::before {
-  content: ""; position: absolute; inset: 0; pointer-events: none;
-  background-image: linear-gradient(var(--grid-dark) 1px, transparent 1px),
-                    linear-gradient(90deg, var(--grid-dark) 1px, transparent 1px);
-  background-size: 28px 28px;
-}
 .rail > * { position: relative; }
 
 .brand { padding: 0 16px 16px; }
@@ -102,9 +94,6 @@ textarea:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .main {
   flex: 1; min-width: 0;
   background-color: var(--paper);
-  background-image: linear-gradient(var(--grid) 1px, transparent 1px),
-                    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-  background-size: 28px 28px;
 }
 
 .page { padding: 24px 28px 72px; max-width: 1200px; }
@@ -227,6 +216,56 @@ textarea:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .row:hover { background: #f7f9fc; }
 .name { font-weight: 550; }
 
+.next-run { color: var(--ok); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; margin-top: 3px; }
+
+.ws-switch { display: block; margin-top: 12px; }
+.ws-switch .select-sm { width: 100%; margin-top: 4px; }
+
+.invite-bar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+.invite-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+  padding: 13px 16px; border-radius: var(--radius);
+  background: var(--warn-bg); border: 1px solid rgba(198,0,126,.28);
+}
+.invite-row .eyebrow { color: var(--warn); }
+
+.link-btn {
+  font: inherit; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+  background: none; border: 0; padding: 0; margin-left: 10px;
+  color: var(--link); cursor: pointer; text-decoration: underline;
+}
+.is-retired .card-name, .is-retired .name { opacity: .62; }
+.is-retired .card, .is-retired.agent-row { background: #fafbfd; }
+
+.diff-warn {
+  margin: 10px 0 0; padding: 10px 13px; border-radius: var(--radius);
+  background: var(--warn-bg); border: 1px solid rgba(198,0,126,.28); color: var(--warn);
+  font-size: 13px;
+}
+.diff-row { align-items: start; }
+.diff-values { display: flex; flex-wrap: wrap; gap: 7px; align-items: baseline; margin-top: 3px; }
+.diff-before { font-family: var(--mono); font-size: 12px; color: var(--muted); text-decoration: line-through; }
+.diff-after  { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+.diff-arrow  { color: var(--muted); }
+
+.spend-figure { font-size: 30px; font-weight: 550; letter-spacing: -.02em; margin: 4px 0 2px; }
+.meter { height: 7px; border-radius: 999px; background: #e6ecf5; overflow: hidden; }
+.meter span { display: block; height: 100%; background: var(--ok); transition: width .3s; }
+.meter span.near { background: var(--sky); }
+.meter span.over { background: var(--warn); }
+
+.filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.filters .search { flex: 1 1 260px; min-width: 200px; max-width: 420px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.req { color: var(--warn); font-size: 9.5px; letter-spacing: .1em; margin-left: 6px; }
+a.icon-act { text-decoration: none; }
+
+.input-row { padding: 14px 16px; }
+.input-row + .input-row { margin-top: 10px; }
+
 /* ── list / grid toolbar ───────────────────────────────────── */
 
 .list-head {
@@ -272,7 +311,7 @@ textarea:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 }
 .card-foot {
   display: flex; align-items: center; gap: 8px;
-  margin-top: auto; padding-top: 11px; padding-right: 76px;
+  margin-top: auto; padding-top: 11px; padding-right: 106px;
   border-top: 1px solid var(--line-soft);
 }
 .card-meta {
@@ -349,12 +388,6 @@ textarea:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   border-radius: var(--radius); padding: 14px 18px 15px; margin-bottom: 18px;
   display: flex; align-items: center; overflow: hidden;
 }
-.strip::before {
-  content: ""; position: absolute; inset: 0; pointer-events: none;
-  background-image: linear-gradient(rgba(148,188,227,.06) 1px, transparent 1px),
-                    linear-gradient(90deg, rgba(148,188,227,.06) 1px, transparent 1px);
-  background-size: 28px 28px;
-}
 .strip::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--ink-2); }
 .strip-sweep { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; overflow: hidden; z-index: 1; }
 .strip-sweep i { position: absolute; top: 0; bottom: 0; width: 24%; background: linear-gradient(90deg, transparent, var(--sky), transparent); animation: as-sweep 5.5s linear infinite; }
@@ -428,9 +461,6 @@ textarea:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .auth-wrap {
   min-height: 100vh; display: grid; place-items: center; padding: 24px;
   background-color: var(--paper);
-  background-image: linear-gradient(var(--grid) 1px, transparent 1px),
-                    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-  background-size: 28px 28px;
 }
 .auth-card { width: 100%; max-width: 420px; }
 .auth-card h1 { font-size: 22px; letter-spacing: .1em; text-transform: uppercase; margin: 10px 0 4px; }

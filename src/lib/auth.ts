@@ -1,20 +1,37 @@
 import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
-import { one } from "./db";
+import { one, q } from "./db";
 
 const COOKIE = "as_session";
 const secret = new TextEncoder().encode(process.env.AUTH_SECRET || "dev-secret-change-me");
+
+export type Membership = {
+  orgId: string;
+  orgName: string;
+  role: string;
+  isOwner: boolean;
+};
 
 export type SessionUser = {
   id: string;
   email: string;
   name: string;
+  /** Role in the workspace currently being viewed. */
   role: string;
+  /** The workspace being viewed. Every org-scoped query uses this. */
   orgId: string;
   orgName: string;
-  /** True only for the account that created the workspace. */
+  /** True only for the account that created the workspace being viewed. */
   isOwner: boolean;
+  /** Every workspace this person belongs to, for the switcher. */
+  memberships: Membership[];
+  /** May invite people and open the members page. */
+  canManageMembers: boolean;
+  /** May put an agent live. Deciding what runs in production is a governance act. */
+  canPublish: boolean;
+  /** Workspace timezone. Schedules fire in it, and dates are rendered in it. */
+  timezone: string;
 };
 
 export async function hashPassword(pw: string) {
@@ -49,21 +66,44 @@ export async function getUser(): Promise<SessionUser | null> {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secret);
-    const row = await one<any>(
-      `select u.id, u.email, u.name, u.role, u.org_id, o.name as org_name, o.owner_id
-         from users u join orgs o on o.id = u.org_id
-        where u.id = $1`,
-      [String(payload.sub)]
-    );
+    const userId = String(payload.sub);
+
+    const row = await one<any>(`select id, email, name, active_org_id from users where id = $1`, [userId]);
     if (!row) return null;
+
+    const rows = await q<any>(
+      `select m.org_id, m.role, o.name as org_name, o.owner_id, o.timezone
+         from memberships m join orgs o on o.id = m.org_id
+        where m.user_id = $1
+        order by (o.owner_id = $1) desc, o.name`,
+      [userId],
+    );
+    if (!rows.length) return null;
+
+    const memberships: Membership[] = rows.map((r) => ({
+      orgId: r.org_id,
+      orgName: r.org_name,
+      role: r.role,
+      isOwner: r.owner_id === userId,
+    }));
+    const activeRow = rows.find((r) => r.org_id === row.active_org_id) ?? rows[0];
+
+    // Fall back to the first workspace when the active one is gone — the person
+    // may have been removed from it since they last looked.
+    const active = memberships.find((m) => m.orgId === row.active_org_id) ?? memberships[0];
+
     return {
       id: row.id,
       email: row.email,
       name: row.name,
-      role: row.role,
-      orgId: row.org_id,
-      orgName: row.org_name,
-      isOwner: row.owner_id === row.id,
+      role: active.role,
+      orgId: active.orgId,
+      orgName: active.orgName,
+      isOwner: active.isOwner,
+      memberships,
+      canManageMembers: active.isOwner || active.role === "admin",
+      canPublish: active.isOwner || active.role === "admin",
+      timezone: activeRow.timezone || "UTC",
     };
   } catch {
     return null;

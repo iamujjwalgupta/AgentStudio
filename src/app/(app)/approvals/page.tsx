@@ -11,6 +11,12 @@ type Approval = {
   tool: string;
   payload: any;
   created_at: string;
+  started_by_name: string | null;
+  /** False when this viewer may not decide this one; `blocked` says why. */
+  canDecide: boolean;
+  blocked: string | null;
+  /** Deciding would be recorded as a self-approval, because nobody else can. */
+  selfWouldApprove: boolean;
 };
 
 function payloadText(p: any) {
@@ -105,28 +111,46 @@ export default function ApprovalsPage() {
                 <span className="tag amber">{a.tool}</span>
               </div>
 
+              {a.started_by_name && (
+                <div className="sub-line" style={{ marginTop: 6 }}>
+                  Started by {a.started_by_name}
+                </div>
+              )}
+
               <div className="eyebrow mt">What would happen</div>
               <pre className="payload">{payloadText(a.payload)}</pre>
 
-              <input
-                className="input"
-                placeholder="Add a note for the record (optional)"
-                value={comments[a.id] ?? ""}
-                onChange={(e) => setComments({ ...comments, [a.id]: e.target.value })}
-              />
+              {a.blocked ? (
+                <div className="note mt">{a.blocked}</div>
+              ) : (
+                <>
+                  {a.selfWouldApprove && (
+                    <div className="note mt">
+                      You started this run and nobody else in this workspace can decide it, so this will be recorded
+                      as a self-approval. Invite someone with the approver role to keep the two duties apart.
+                    </div>
+                  )}
+                  <input
+                    className="input"
+                    placeholder="Add a note for the record (optional)"
+                    value={comments[a.id] ?? ""}
+                    onChange={(e) => setComments({ ...comments, [a.id]: e.target.value })}
+                  />
 
-              <div className="panel-foot">
-                <button className="btn" onClick={() => decide(a.id, "rejected")} disabled={busy === a.id}>
-                  Reject
-                </button>
-                <button
-                  className="btn btn-warn"
-                  onClick={() => decide(a.id, "approved")}
-                  disabled={busy === a.id}
-                >
-                  {busy === a.id ? "Working…" : "Approve and continue"}
-                </button>
-              </div>
+                  <div className="panel-foot">
+                    <button className="btn" onClick={() => decide(a.id, "rejected")} disabled={busy === a.id}>
+                      Reject
+                    </button>
+                    <button
+                      className="btn btn-warn"
+                      onClick={() => decide(a.id, "approved")}
+                      disabled={busy === a.id}
+                    >
+                      {busy === a.id ? "Working…" : "Approve and continue"}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           ))}
         </div>

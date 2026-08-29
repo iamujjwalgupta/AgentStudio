@@ -27,6 +27,53 @@ update orgs o set owner_id = (
    order by (u.role = 'admin') desc, u.created_at asc limit 1
 ) where o.owner_id is null;
 
+-- Who may see a workspace, and as what. This is the authority for access and
+-- role; users.org_id is only the workspace that person originally created.
+-- A person may belong to several workspaces and switch between them.
+create table if not exists memberships (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references users(id) on delete cascade,
+  org_id     uuid not null references orgs(id) on delete cascade,
+  role       text not null default 'builder' check (role in ('admin','builder','approver')),
+  created_at timestamptz not null default now(),
+  unique (user_id, org_id)
+);
+
+-- Everyone who existed before memberships keeps exactly the access they had.
+insert into memberships (user_id, org_id, role)
+  select u.id, u.org_id, u.role from users u
+  on conflict (user_id, org_id) do nothing;
+
+-- Which of their workspaces the person is currently looking at.
+alter table users add column if not exists active_org_id uuid references orgs(id) on delete set null;
+update users set active_org_id = org_id where active_org_id is null;
+
+create index if not exists idx_memberships_user on memberships (user_id);
+create index if not exists idx_memberships_org  on memberships (org_id);
+
+-- An invitation to join a workspace. Works whether or not the address already
+-- has an account: with one, they accept in the app; without, the token carries
+-- them through sign-up into this workspace instead of a new one.
+create table if not exists invitations (
+  id              uuid primary key default gen_random_uuid(),
+  org_id          uuid not null references orgs(id) on delete cascade,
+  email           text not null,
+  role            text not null default 'builder' check (role in ('admin','builder','approver')),
+  token           text not null unique,
+  invited_by      uuid references users(id) on delete set null,
+  invited_by_name text not null default '',
+  status          text not null default 'pending' check (status in ('pending','accepted','revoked','expired')),
+  expires_at      timestamptz not null,
+  created_at      timestamptz not null default now(),
+  accepted_at     timestamptz,
+  accepted_by     uuid references users(id) on delete set null
+);
+
+-- One standing invitation per address per workspace.
+create unique index if not exists uniq_invite_pending
+  on invitations (org_id, lower(email)) where status = 'pending';
+create index if not exists idx_invitations_email on invitations (lower(email), status);
+
 -- Connections are provisioned once and referenced by agents. Secrets are
 -- encrypted at rest with APP_SECRET and never returned to the browser.
 create table if not exists connections (
@@ -64,6 +111,17 @@ create table if not exists agents (
   updated_at      timestamptz not null default now()
 );
 
+-- Scheduling state. The typed sentence lives in the spec; these columns hold
+-- what the scheduler derived from it and when the agent is next due. Only a
+-- published agent ever carries a next_run_at.
+alter table orgs   add column if not exists timezone        text not null default 'UTC';
+alter table agents add column if not exists schedule        jsonb;
+alter table agents add column if not exists schedule_caveat text not null default '';
+alter table agents add column if not exists next_run_at     timestamptz;
+alter table agents add column if not exists last_run_at     timestamptz;
+
+create index if not exists idx_agents_due on agents (next_run_at) where next_run_at is not null;
+
 create table if not exists agent_versions (
   id          uuid primary key default gen_random_uuid(),
   agent_id    uuid not null references agents(id) on delete cascade,
@@ -94,6 +152,31 @@ create table if not exists runs (
   input_tokens int not null default 0,
   output_tokens int not null default 0
 );
+
+-- Spend. Cache tokens are billed at different rates from fresh input, so they
+-- are recorded separately. Cost is computed when the run finishes and stored,
+-- so changing the rate table never rewrites what past runs actually cost.
+alter table runs add column if not exists model              text;
+alter table runs add column if not exists cache_read_tokens  int not null default 0;
+alter table runs add column if not exists cache_write_tokens int not null default 0;
+alter table runs add column if not exists cost_usd           numeric(12,6) not null default 0;
+
+-- Monthly ceiling for the workspace, in US dollars. Null means no limit.
+alter table orgs add column if not exists monthly_cap_usd numeric(10,2);
+
+create index if not exists idx_runs_org_month on runs (org_id, started_at desc);
+
+-- Held by whichever worker is currently stepping this run. A lease rather than
+-- a lock, so a crashed worker's run becomes claimable again instead of wedging.
+alter table runs add column if not exists locked_at timestamptz;
+
+-- A rehearsal. Consequential actions are described rather than carried out, so
+-- an agent can be seen working before it is published and gated.
+alter table runs add column if not exists dry_run boolean not null default false;
+
+-- What the person filled in on the run form, keyed by input key. Recorded so a
+-- run can be read back knowing exactly what it was given.
+alter table runs add column if not exists inputs jsonb not null default '{}'::jsonb;
 
 create table if not exists run_steps (
   id          uuid primary key default gen_random_uuid(),
@@ -153,6 +236,31 @@ create unique index if not exists uniq_share_pending
   on agent_shares (agent_id, to_user_id) where status = 'pending';
 create index if not exists idx_shares_in on agent_shares (to_user_id, status, created_at desc);
 create index if not exists idx_shares_out on agent_shares (from_org_id, created_at desc);
+
+-- A decision taken by the same person who started the run. Only possible when
+-- nobody else is eligible to decide; recorded so it is never invisible.
+alter table approvals add column if not exists self_approved boolean not null default false;
+
+-- Which events the workspace wants to hear about, and where. Absent keys mean
+-- the default in src/lib/notify.ts applies.
+alter table orgs add column if not exists notify jsonb not null default '{}'::jsonb;
+
+-- Every delivery attempt, so a notification that never arrived can be explained
+-- rather than guessed at. Delivery failures never fail the thing they report.
+create table if not exists notifications (
+  id         uuid primary key default gen_random_uuid(),
+  org_id     uuid not null references orgs(id) on delete cascade,
+  event      text not null,
+  channel    text not null check (channel in ('email','slack')),
+  recipient  text not null default '',
+  subject    text not null default '',
+  status     text not null default 'sent' check (status in ('sent','failed','skipped')),
+  detail     text not null default '',
+  entity_id  text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_notifications_org on notifications (org_id, created_at desc);
 
 -- Append-only. No update or delete path exists in the application.
 create table if not exists audit_events (

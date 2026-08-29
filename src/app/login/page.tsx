@@ -1,12 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function Login() {
   const router = useRouter();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [form, setForm] = useState({ email: "", password: "", name: "", org: "" });
+  // An invitation link lands here; sign-up then joins that workspace rather
+  // than creating a new one, so the workspace name is not asked for.
+  const [invite, setInvite] = useState("");
+
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("invite");
+    if (t) {
+      setInvite(t);
+      setMode("register");
+    }
+  }, []);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -16,7 +27,7 @@ export default function Login() {
     const res = await fetch("/api/auth", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: mode, ...form }),
+      body: JSON.stringify({ action: mode, ...form, invite: invite || undefined }),
     });
     const data = await res.json();
     setBusy(false);
@@ -31,7 +42,7 @@ export default function Login() {
     <div className="auth-wrap">
       <div className="auth-card">
         <div className="eyebrow">Agent Studio</div>
-        <h1>{mode === "login" ? "Sign in" : "Create a workspace"}</h1>
+        <h1>{mode === "login" ? "Sign in" : invite ? "Join the workspace" : "Create a workspace"}</h1>
         <p className="sub" style={{ fontSize: 13, marginBottom: 18 }}>
           {mode === "login"
             ? "Your agents, connections and audit trail live in your workspace."
@@ -39,7 +50,7 @@ export default function Login() {
         </p>
 
         <div className="stack">
-          {mode === "register" && (
+          {mode === "register" && !invite && (
             <>
               <label className="field">
                 <span className="eyebrow">Your name</span>
@@ -71,7 +82,7 @@ export default function Login() {
 
         <button className="btn primary mt" style={{ width: "100%" }} onClick={submit} disabled={busy}>
           {busy && <span className="spin" />}
-          {mode === "login" ? "Sign in" : "Create workspace"}
+          {mode === "login" ? "Sign in" : invite ? "Join workspace" : "Create workspace"}
         </button>
 
         <button

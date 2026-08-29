@@ -1,6 +1,9 @@
 import path from "path";
 import { q, one } from "./db";
 import { anthropicFor, buildSystemPrompt, audit } from "./ai";
+import { costOf } from "./pricing";
+import { spendThisMonth, capFor, OVER_CAP } from "./spend";
+import { notify, approverEmails } from "./notify";
 import { TOOLS, toolById, anthropicTools, type ConnRow, type ToolContext } from "./tools";
 import type { AgentSpec } from "./types";
 
@@ -22,7 +25,7 @@ async function loadContext(
   spec: AgentSpec,
   model: { apiKey: string; model: string },
 ): Promise<ToolContext> {
-  const ids = spec.sources.map((s) => s.connectionId);
+  const ids = (spec.sources || []).map((s) => s.connectionId);
   const rows = ids.length
     ? await q<ConnRow>(`select id, name, kind, config, secret_enc from connections where org_id = $1 and id = any($2::uuid[])`, [orgId, ids])
     : [];
@@ -62,19 +65,23 @@ export async function startRun(opts: {
   input: string;
   user: { id: string; name: string };
   trigger?: string;
+  dryRun?: boolean;
+  inputs?: Record<string, string>;
 }) {
   const run = await one<any>(
-    `insert into runs (org_id, agent_id, version, spec, trigger, input, state, started_by)
-     values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
+    `insert into runs (org_id, agent_id, version, spec, trigger, input, state, started_by, dry_run, inputs)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
     [
       opts.orgId,
       opts.agentId,
       opts.version,
       JSON.stringify(opts.spec),
-      opts.trigger || "manual",
+      opts.dryRun ? "rehearsal" : opts.trigger || "manual",
       opts.input,
       JSON.stringify({ messages: [{ role: "user", content: opts.input || "Begin." }], partial: [], steps: 0 }),
       opts.user.id,
+      Boolean(opts.dryRun),
+      JSON.stringify(opts.inputs || {}),
     ],
   );
   await audit(opts.orgId, opts.user, "Started run", "run", run.id, { agentId: opts.agentId, input: opts.input });
@@ -82,18 +89,60 @@ export async function startRun(opts: {
   return run.id as string;
 }
 
-/** Drives the plan–act–observe loop until the run completes or hits an approval gate. */
-export async function advance(runId: string, user: { id: string; name: string }) {
-  const run = await one<RunRow>(`select * from runs where id = $1`, [runId]);
-  if (!run) throw new Error("Run not found");
+/** How long a worker may hold a run before another may take it over. */
+const LEASE = "5 minutes";
+
+/**
+ * Drives the plan–act–observe loop until the run completes or hits an approval gate.
+ *
+ * Entry is guarded by an atomic claim: the same run cannot be stepped by two
+ * workers at once, which would re-execute its tool calls — sending the same
+ * email twice. The claim is a lease, so a worker that dies mid-run releases it
+ * by expiry rather than wedging the run forever.
+ *
+ * @param heldLease  set by resumeAfterApprovals, which has already claimed the run.
+ */
+export async function advance(
+  runId: string,
+  user: { id: string; name: string },
+  heldLease = false,
+) {
+  const run = heldLease
+    ? await one<RunRow>(`select * from runs where id = $1`, [runId])
+    : await one<RunRow>(
+        `update runs set locked_at = now()
+          where id = $1 and status = 'running'
+            and (locked_at is null or locked_at < now() - interval '${LEASE}')
+          returning *`,
+        [runId],
+      );
+  // No row means another worker holds it, or it is no longer running. Either
+  // way this caller has nothing to do.
+  if (!run) return;
   if (run.status !== "running") return;
 
   const spec = run.spec;
-  // Resolved once per advance, so a key changed mid-run is picked up on resume.
-  const { client, model, apiKey } = await anthropicFor(run.org_id);
-  const ctx = await loadContext(run.org_id, run.started_by || user.id, spec, { apiKey, model });
+
+  // Setup can fail too — no model key, an unreachable database. It must fail the
+  // run rather than throw past it, or the run is stranded on 'running' forever.
+  let client, model: string, ctx;
   const connectionNames: Record<string, string> = {};
-  for (const c of Object.values(ctx.connections)) connectionNames[c.id] = c.name;
+  try {
+    // Resolved once per advance, so a key changed mid-run is picked up on resume.
+    const access = await anthropicFor(run.org_id);
+    client = access.client;
+    model = access.model;
+    ctx = await loadContext(run.org_id, run.started_by || user.id, spec, {
+      apiKey: access.apiKey,
+      model: access.model,
+    });
+    for (const c of Object.values(ctx.connections)) connectionNames[c.id] = c.name;
+  } catch (err: any) {
+    await finish(runId, "failed", null, err?.message || String(err), { model: "", inTok: 0, outTok: 0, cacheRead: 0, cacheWrite: 0 });
+    return;
+  }
+
+  const usage = () => ({ model, inTok, outTok, cacheRead, cacheWrite });
 
   const system = buildSystemPrompt(spec, connectionNames);
   const tools = anthropicTools(spec.tools);
@@ -103,11 +152,24 @@ export async function advance(runId: string, user: { id: string; name: string })
   let steps = run.state.steps || 0;
   let inTok = 0;
   let outTok = 0;
+  let cacheRead = 0;
+  let cacheWrite = 0;
 
   try {
     while (true) {
+      // Keeps the lease alive while this worker is still doing the work.
+      await q(`update runs set locked_at = now() where id = $1`, [runId]);
+
+      // Checked every iteration, not just at the start: one long run must not be
+      // able to carry the workspace past its ceiling.
+      const cap = await capFor(run.org_id);
+      if (cap !== null && (await spendThisMonth(run.org_id)) + costOf(toUsage(usage())) >= cap) {
+        await finish(runId, "failed", null, OVER_CAP, usage());
+        return;
+      }
+
       if (steps >= spec.guardrails.maxSteps + 4) {
-        await finish(runId, "failed", null, "The run exceeded its step budget.", inTok, outTok);
+        await finish(runId, "failed", null, "The run exceeded its step budget.", usage());
         return;
       }
 
@@ -121,6 +183,9 @@ export async function advance(runId: string, user: { id: string; name: string })
       });
       inTok += res.usage?.input_tokens ?? 0;
       outTok += res.usage?.output_tokens ?? 0;
+      // Billed at different rates from fresh input; counted separately.
+      cacheRead += res.usage?.cache_read_input_tokens ?? 0;
+      cacheWrite += res.usage?.cache_creation_input_tokens ?? 0;
       steps++;
 
       messages.push({ role: "assistant", content: res.content });
@@ -142,7 +207,7 @@ export async function advance(runId: string, user: { id: string; name: string })
       }
 
       if (!toolUses.length) {
-        await finish(runId, "completed", text, null, inTok, outTok);
+        await finish(runId, "completed", text, null, usage());
         await audit(run.org_id, user, "Run completed", "run", runId, {});
         return;
       }
@@ -154,6 +219,28 @@ export async function advance(runId: string, user: { id: string; name: string })
         const def = toolById(use.name);
         if (!def) {
           results.push({ type: "tool_result", tool_use_id: use.id, is_error: true, content: `Unknown tool ${use.name}` });
+          continue;
+        }
+
+        // A rehearsal never carries out a consequential action. The model is told
+        // plainly that it was simulated, so it carries on and still produces a
+        // deliverable — which is the point of rehearsing.
+        if ((run as any).dry_run && gateOf(use.name) === "approval") {
+          await addStep(runId, await nextIdx(runId), {
+            kind: "tool",
+            tool: use.name,
+            title: `${def.label} — not carried out (rehearsal)`,
+            input: use.input,
+            output: { rehearsal: true, wouldHaveDone: use.input },
+            status: "skipped",
+          });
+          results.push({
+            type: "tool_result",
+            tool_use_id: use.id,
+            content:
+              `This was a rehearsal, so the action was not carried out. Treat it as having succeeded ` +
+              `and continue with the rest of the procedure.`,
+          });
           continue;
         }
 
@@ -203,9 +290,21 @@ export async function advance(runId: string, user: { id: string; name: string })
 
       if (paused) {
         await q(
-          `update runs set status = 'awaiting_approval', state = $2, input_tokens = input_tokens + $3, output_tokens = output_tokens + $4 where id = $1`,
+          `update runs set status = 'awaiting_approval', locked_at = null, state = $2,
+             input_tokens = input_tokens + $3, output_tokens = output_tokens + $4 where id = $1`,
           [runId, JSON.stringify({ messages, partial: results, steps }), inTok, outTok],
         );
+        // A gate holds indefinitely by design, which only works if someone knows.
+        const held = toolUses.filter((u: any) => gateOf(u.name) === "approval").map((u: any) => u.name);
+        await notify(run.org_id, {
+          event: "approval_waiting",
+          entityId: runId,
+          to: await approverEmails(run.org_id),
+          subject: `${spec.name} is waiting for approval`,
+          body:
+            `The agent "${spec.name}" stopped before ${held.join(", ")} and is holding until someone decides.\n\n` +
+            `Review it under Approvals. The run stays paused until then.`,
+        });
         return;
       }
 
@@ -213,24 +312,40 @@ export async function advance(runId: string, user: { id: string; name: string })
       await q(`update runs set state = $2 where id = $1`, [runId, JSON.stringify({ messages, partial: [], steps })]);
     }
   } catch (err: any) {
-    await finish(runId, "failed", null, err?.message || String(err), inTok, outTok);
+    await finish(runId, "failed", null, err?.message || String(err), usage());
   }
 }
 
 /** Called once every approval on a paused run has a decision. */
 export async function resumeAfterApprovals(runId: string, user: { id: string; name: string }) {
-  const run = await one<RunRow>(`select * from runs where id = $1`, [runId]);
-  if (!run || run.status !== "awaiting_approval") return;
-
   const pending = await q<any>(`select count(*)::int as n from approvals where run_id = $1 and status = 'pending'`, [runId]);
   if (pending[0]?.n > 0) return;
+
+  // Exactly one caller can move the run out of 'awaiting_approval'. Without this,
+  // two approvers deciding the last two gates at the same instant would both
+  // carry out the approved actions.
+  const run = await one<RunRow>(
+    `update runs set status = 'running', locked_at = now()
+      where id = $1 and status = 'awaiting_approval'
+      returning *`,
+    [runId],
+  );
+  if (!run) return;
 
   const decided = await q<any>(
     `select * from approvals where run_id = $1 order by created_at asc`,
     [runId],
   );
-  const { model, apiKey } = await anthropicFor(run.org_id);
-  const ctx = await loadContext(run.org_id, run.started_by || user.id, run.spec, { apiKey, model });
+  // As in advance(): a setup failure must fail the run, not escape to the caller
+  // and leave it stranded on 'awaiting_approval' forever.
+  let ctx;
+  try {
+    const { model, apiKey } = await anthropicFor(run.org_id);
+    ctx = await loadContext(run.org_id, run.started_by || user.id, run.spec, { apiKey, model });
+  } catch (err: any) {
+    await finish(runId, "failed", null, err?.message || String(err), { model: "", inTok: 0, outTok: 0, cacheRead: 0, cacheWrite: 0 });
+    return;
+  }
   const results = [...(run.state.partial || [])];
   const handled = new Set(results.map((r: any) => r.tool_use_id));
 
@@ -280,11 +395,46 @@ export async function resumeAfterApprovals(runId: string, user: { id: string; na
   }
 
   const messages = [...run.state.messages, { role: "user", content: results }];
-  await q(`update runs set status = 'running', state = $2 where id = $1`, [
+  await q(`update runs set state = $2 where id = $1`, [
     runId,
     JSON.stringify({ messages, partial: [], steps: run.state.steps }),
   ]);
-  await advance(runId, user);
+  // The lease is already held from the transition above.
+  await advance(runId, user, true);
+}
+
+type RunUsage = { model: string; inTok: number; outTok: number; cacheRead: number; cacheWrite: number };
+
+const toUsage = (u: RunUsage) => ({
+  model: u.model,
+  inputTokens: u.inTok,
+  outputTokens: u.outTok,
+  cacheReadTokens: u.cacheRead,
+  cacheWriteTokens: u.cacheWrite,
+});
+
+/** Announces a failure. Scheduled runs matter most: nobody is watching them. */
+async function announceFailure(runId: string, error: string | null) {
+  if (!error) return;
+  const r = await one<any>(
+    `select r.org_id, r.trigger, a.name as agent_name, us.email as started_by_email
+       from runs r join agents a on a.id = r.agent_id
+       left join users us on us.id = r.started_by
+      where r.id = $1`,
+    [runId],
+  );
+  if (!r) return;
+  const unattended = r.trigger === "schedule";
+  const to = unattended ? await approverEmails(r.org_id) : r.started_by_email ? [r.started_by_email] : [];
+  await notify(r.org_id, {
+    event: "run_failed",
+    entityId: runId,
+    to,
+    subject: `${r.agent_name} failed${unattended ? " on its schedule" : ""}`,
+    body:
+      `The run ${unattended ? "started on a schedule and " : ""}did not finish.\n\n` +
+      `Reason: ${error}\n\nOpen the run to see how far it got.`,
+  });
 }
 
 async function finish(
@@ -292,14 +442,18 @@ async function finish(
   status: string,
   output: string | null,
   error: string | null,
-  inTok: number,
-  outTok: number,
+  u: RunUsage,
 ) {
+  // Cost is priced now and stored, so a later rate change never rewrites history.
   await q(
-    `update runs set status = $2, output = $3, error = $4, ended_at = now(),
-       input_tokens = input_tokens + $5, output_tokens = output_tokens + $6 where id = $1`,
-    [runId, status, output, error, inTok, outTok],
+    `update runs set status = $2, output = $3, error = $4, ended_at = now(), locked_at = null, model = coalesce($7, model),
+       input_tokens = input_tokens + $5, output_tokens = output_tokens + $6,
+       cache_read_tokens = cache_read_tokens + $8, cache_write_tokens = cache_write_tokens + $9,
+       cost_usd = cost_usd + $10
+     where id = $1`,
+    [runId, status, output, error, u.inTok, u.outTok, u.model || null, u.cacheRead, u.cacheWrite, costOf(toUsage(u))],
   );
+  if (status === "failed") await announceFailure(runId, error);
 }
 
 export { TOOLS };

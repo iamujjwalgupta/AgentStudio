@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { q, one } from "@/lib/db";
 import { requireUser, verifyPassword } from "@/lib/auth";
 import { audit } from "@/lib/ai";
+import { syncAgentSchedule } from "@/lib/agent-schedule";
 
 export const runtime = "nodejs";
 
@@ -32,6 +33,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     [id, u.orgId, JSON.stringify(spec), spec.name || "Untitled agent", spec.purpose || "", spec.archetype],
   );
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  await syncAgentSchedule(id);
   await audit(u.orgId, u, "Saved draft", "agent", id, { name: row.name });
   return NextResponse.json({ agent: row });
 }

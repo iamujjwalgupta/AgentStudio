@@ -40,7 +40,7 @@ export default async function AgentsPage() {
           <NewAgentButton />
         </div>
       ) : (
-        !dbError && <AgentList agents={agents} canDelete={u.isOwner} />
+        !dbError && <AgentList agents={agents} canDelete={u.isOwner} timezone={u.timezone} />
       )}
     </div>
   );

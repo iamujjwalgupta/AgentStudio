@@ -69,6 +69,7 @@ export default function RunView({ runId }: { runId: string }) {
             <StatusPill status={run.status} />
             <span className="mono dim">
               {new Date(run.started_at).toLocaleString()}
+              {run.dry_run ? " · rehearsal — gated actions were described, not carried out" : ""}
               {run.version ? ` · v${run.version}` : " · draft"}
               {run.input_tokens ? ` · ${run.input_tokens + run.output_tokens} tokens` : ""}
             </span>
