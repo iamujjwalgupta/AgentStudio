@@ -3,6 +3,8 @@ import { q, one } from "@/lib/db";
 import { requireUser, verifyPassword } from "@/lib/auth";
 import { audit } from "@/lib/ai";
 import { syncAgentSchedule } from "@/lib/agent-schedule";
+import { skillsFor } from "@/lib/skills";
+import { specSkillIds } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -27,6 +29,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const u = await requireUser();
   const { id } = await params;
   const { spec } = await req.json();
+
+  // A spec may only name skills this workspace owns. Anything else is dropped
+  // rather than rejected: a spec arriving with a stale id — from a share, or a
+  // skill deleted while the builder was open — should save cleanly and simply
+  // lose the skill, which is what the run would do with it anyway.
+  const granted = await skillsFor(u.orgId, specSkillIds(spec));
+  spec.skills = granted.map((s) => s.id);
+
   const row = await one<any>(
     `update agents set draft_spec = $3, name = $4, description = $5, archetype = $6, updated_at = now()
      where id = $1 and org_id = $2 returning *`,

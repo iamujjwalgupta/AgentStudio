@@ -5,7 +5,8 @@ import { costOf } from "./pricing";
 import { spendThisMonth, capFor, OVER_CAP } from "./spend";
 import { notify, approverEmails } from "./notify";
 import { TOOLS, toolById, anthropicTools, type ConnRow, type ToolContext } from "./tools";
-import type { AgentSpec } from "./types";
+import { skillsFor } from "./skills";
+import { specSkillIds, type AgentSpec } from "./types";
 
 const STORAGE = process.env.STORAGE_DIR || path.join(process.cwd(), "storage");
 
@@ -24,6 +25,8 @@ async function loadContext(
   userId: string,
   spec: AgentSpec,
   model: { apiKey: string; model: string },
+  runId?: string,
+  agentId?: string,
 ): Promise<ToolContext> {
   const ids = (spec.sources || []).map((s) => s.connectionId);
   const rows = ids.length
@@ -31,7 +34,20 @@ async function loadContext(
     : [];
   const connections: Record<string, ConnRow> = {};
   for (const r of rows) connections[r.id] = r;
-  return { orgId, userId, connections, storageDir: STORAGE, apiKey: model.apiKey, model: model.model };
+  // Resolved at run time rather than snapshotted into the spec, so an edit to a
+  // skill reaches every agent that holds it without republishing each one.
+  const skills = await skillsFor(orgId, specSkillIds(spec));
+  return {
+    orgId,
+    userId,
+    connections,
+    skills,
+    storageDir: STORAGE,
+    apiKey: model.apiKey,
+    model: model.model,
+    runId,
+    agentId,
+  };
 }
 
 async function addStep(runId: string, idx: number, s: Partial<any>) {
@@ -67,10 +83,11 @@ export async function startRun(opts: {
   trigger?: string;
   dryRun?: boolean;
   inputs?: Record<string, string>;
+  parentRunId?: string;
 }) {
   const run = await one<any>(
-    `insert into runs (org_id, agent_id, version, spec, trigger, input, state, started_by, dry_run, inputs)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`,
+    `insert into runs (org_id, agent_id, version, spec, trigger, input, state, started_by, dry_run, inputs, parent_run_id)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id`,
     [
       opts.orgId,
       opts.agentId,
@@ -82,9 +99,14 @@ export async function startRun(opts: {
       opts.user.id,
       Boolean(opts.dryRun),
       JSON.stringify(opts.inputs || {}),
+      opts.parentRunId ?? null,
     ],
   );
-  await audit(opts.orgId, opts.user, "Started run", "run", run.id, { agentId: opts.agentId, input: opts.input });
+  await audit(opts.orgId, opts.user, "Started run", "run", run.id, {
+    agentId: opts.agentId,
+    input: opts.input,
+    ...(opts.parentRunId ? { parentRunId: opts.parentRunId } : {}),
+  });
   await advance(run.id, opts.user);
   return run.id as string;
 }
@@ -132,10 +154,14 @@ export async function advance(
     const access = await anthropicFor(run.org_id);
     client = access.client;
     model = access.model;
-    ctx = await loadContext(run.org_id, run.started_by || user.id, spec, {
-      apiKey: access.apiKey,
-      model: access.model,
-    });
+    ctx = await loadContext(
+      run.org_id,
+      run.started_by || user.id,
+      spec,
+      { apiKey: access.apiKey, model: access.model },
+      run.id,
+      run.agent_id,
+    );
     for (const c of Object.values(ctx.connections)) connectionNames[c.id] = c.name;
   } catch (err: any) {
     await finish(runId, "failed", null, err?.message || String(err), { model: "", inTok: 0, outTok: 0, cacheRead: 0, cacheWrite: 0 });
@@ -144,9 +170,15 @@ export async function advance(
 
   const usage = () => ({ model, inTok, outTok, cacheRead, cacheWrite });
 
-  const system = buildSystemPrompt(spec, connectionNames);
-  const tools = anthropicTools(spec.tools);
-  const gateOf = (id: string) => spec.tools.find((t) => t.id === id)?.gate ?? "approval";
+  const system = buildSystemPrompt(spec, connectionNames, ctx.skills);
+  // load_skill is granted by the runtime, not by the spec, and only when there
+  // is something to load.
+  const tools = anthropicTools(spec.tools, ctx.skills.length ? ["load_skill"] : []);
+  // Unlisted tools default to needing approval, which is the right instinct for
+  // anything the spec did not grant. An implicit tool reaches nothing outside
+  // the workspace's own writing, so it is exempt rather than permanently stuck.
+  const gateOf = (id: string) =>
+    toolById(id)?.implicit ? "auto" : spec.tools.find((t) => t.id === id)?.gate ?? "approval";
 
   const messages: any[] = [...run.state.messages];
   let steps = run.state.steps || 0;

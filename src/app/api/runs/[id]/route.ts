@@ -20,5 +20,24 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
      where a.run_id = $1 order by a.created_at asc`,
     [id],
   );
-  return NextResponse.json({ run, steps, approvals });
+
+  let parentRun: any = null;
+  if (run.parent_run_id) {
+    parentRun = await one<any>(
+      `select r.id, r.agent_id, a.name as agent_name from runs r
+       join agents a on a.id = r.agent_id where r.id = $1`,
+      [run.parent_run_id],
+    );
+  }
+
+  const childRuns = await q<any>(
+    `select r.id, r.agent_id, a.name as agent_name, r.status, r.started_at, r.ended_at, r.input, r.output
+       from runs r
+       join agents a on a.id = r.agent_id
+      where r.parent_run_id = $1
+      order by r.started_at asc`,
+    [id],
+  );
+
+  return NextResponse.json({ run, steps, approvals, parentRun, childRuns });
 }

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { q, one } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { TOOLS } from "@/lib/tools";
+import { SELECTABLE_TOOLS } from "@/lib/tools";
 import Builder from "@/components/Builder";
 import { emptySpec } from "@/lib/types";
 
@@ -32,6 +32,12 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
     `select id, status, started_at, input from runs where agent_id = $1 order by started_at desc limit 20`,
     [id],
   );
+  // Every skill the workspace has, not only the attached ones: the builder is
+  // where they get attached, so it needs the whole list to offer.
+  const skills = await q<any>(
+    `select id, name, label, description from skills where org_id = $1 order by label`,
+    [u.orgId],
+  );
 
   return (
     <Builder
@@ -39,8 +45,9 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
       initialSpec={{ ...emptySpec(), ...(agent.draft_spec || {}) }}
       status={agent.status}
       publishedVer={agent.published_ver}
-      tools={TOOLS.map((t) => ({ id: t.id, label: t.label, description: t.description, risk: t.risk, needs: t.needs ?? null }))}
+      tools={SELECTABLE_TOOLS.map((t) => ({ id: t.id, label: t.label, description: t.description, risk: t.risk, needs: t.needs ?? null }))}
       connections={connections}
+      skills={skills}
       versions={versions}
       runs={runs}
       timezone={u.timezone}

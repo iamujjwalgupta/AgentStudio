@@ -121,7 +121,7 @@ export async function POST(req: Request) {
       `${u.name} (${u.orgName}) sent you the agent "${agent.name}".\n\n` +
       (note ? `They said: ${note}\n\n` : "") +
       `It is waiting under Shares. Accepting copies it into your workspace as a draft; ` +
-      `its connections are not included, so you grant your own before publishing.`,
+      `its connections and skills are not included, so you grant your own before publishing.`,
   });
 
   return NextResponse.json({ ok: true, id: share.id, to: { name: to.name, org: to.org_name } });

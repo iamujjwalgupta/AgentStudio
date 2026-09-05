@@ -14,6 +14,7 @@ Domain-agnostic — nothing in the model, the tools, or the copy assumes finance
 - **Postgres** as the system of record. Idempotent schema in `db/schema.sql`.
 - **Brief → spec compiler.** A model call turns a paragraph into a structured `AgentSpec`, validated against the tools and connections the user actually has.
 - **Eight working tools**, listed below. Not stubs.
+- **Skills.** Reusable know-how, written once in the workspace and attached to any agent. See below.
 - **Approval gates.** Medium and high-risk actions stop mid-run, persist state, and wait for a decision. Rejection is fed back to the agent, which must finish without the action and say so.
 - **A scheduler.** Agents with a schedule actually fire, on their own, in the workspace's timezone.
 - **Draft / publish with versioning, and a diff.** Every run stamps the version it used, and publishing shows what changes — with anything that loosens the agent's licence flagged first.
@@ -50,6 +51,22 @@ Files uploaded on the form become documents the agent reads with its document to
 Risk drives the default gate. Low risk runs automatically; medium and high cannot be published ungated.
 
 **Connections are standing credentials** — a ledger database, a mailbox, a Slack channel — provisioned once and granted to agents. They are not where per-run data goes; that is what the run form is for. A workspace can also hold its own **Anthropic** connection, which overrides the server's key and lets it bring its own model.
+
+
+## Skills
+
+A tool is capability. A skill is instruction: how *this* workspace does a piece of work, in its own words — how invoices get reconciled here, what counts as a P1, the house tone for writing to a customer. Written once under **Skills**, attached to any number of agents on the builder's Instructions step.
+
+Because a skill grants no capability, it carries no risk rating and no gate: attaching one can never let an agent reach something it could not already reach.
+
+They reach the agent by **progressive disclosure**. Each attached skill's name and one-line summary sits in the system prompt; the body is pulled with an implicit `load_skill` tool only when the agent judges the work calls for it. A workspace can therefore accumulate skills without every agent paying for all of them on every turn — and the summary, not the body, is what an agent decides on, so it is the line worth writing carefully.
+
+Write a skill by hand, or describe it and have it drafted — the draft lands in the editor and nothing is stored until you save it.
+
+Two consequences worth knowing:
+
+- **An edit to a skill reaches every agent holding it on its next run, without going through publish.** That is the point of shared know-how, but it means skill writes are audited, and attaching or removing one shows in an agent's version diff.
+- **Skills are workspace-specific, like connections.** A shared agent arrives with its skills stripped, because an id from another workspace means nothing here.
 
 ## Setup
 

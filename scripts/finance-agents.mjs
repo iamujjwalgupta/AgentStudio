@@ -27,7 +27,7 @@ export const AGENTS = [
       "Write the full checklist to a file, ordered by status with overdue tasks first.",
       "Post a short status to the finance channel: counts by status, then the overdue tasks with their owners.",
     ],
-    tools: ["sql_query", "write_file", "post_message"],
+    tools: ["sql_query", "write_file", "post_message", "invoke_agent"],
     inputs: [{ label: "Period", hint: "The close period, e.g. 2026-08" }],
     output: {
       format: "Markdown checklist",
@@ -824,7 +824,7 @@ export const AGENTS = [
       "Compare the new full-year view to the previous forecast and quantify every change.",
       "Write the reforecast with a bridge from the old view to the new one.",
     ],
-    tools: ["read_document", "write_file"],
+    tools: ["read_document", "write_file", "invoke_agent"],
     inputs: [
       { label: "Current forecast", hint: "The forecast being rolled" },
       { label: "Actuals", hint: "Results for the periods now closed" },
@@ -935,7 +935,7 @@ export const AGENTS = [
       "Write commentary for each flagged metric explaining the movement from the underlying data.",
       "Write the pack with the metric table first and the commentary beneath.",
     ],
-    tools: ["sql_query", "write_file"],
+    tools: ["sql_query", "write_file", "invoke_agent"],
     inputs: [
       { label: "Pack definition", hint: "Which metrics, how each is calculated, and its target" },
       { label: "Period", hint: "Reporting period for the pack" },
@@ -1309,7 +1309,7 @@ export const AGENTS = [
       "Flag items past their due date and calculate how late each is.",
       "Write a tracker grouped by status, with overdue items first.",
     ],
-    tools: ["read_document", "write_file"],
+    tools: ["read_document", "write_file", "invoke_agent"],
     inputs: [
       { label: "Auditor request list", hint: "The prepared-by-client list" },
       { label: "Documents provided", hint: "An index of what has already gone across" },

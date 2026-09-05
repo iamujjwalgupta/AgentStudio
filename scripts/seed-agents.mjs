@@ -18,6 +18,7 @@ const TOOLS = {
   send_email: { label: "Send an email", risk: "medium", needs: "smtp" },
   post_message: { label: "Post to Slack", risk: "medium", needs: "slack" },
   write_file: { label: "Write a file", risk: "low" },
+  invoke_agent: { label: "Delegate to another agent", risk: "low" },
 };
 
 const gateFor = (risk) => (risk === "low" ? "auto" : "approval");

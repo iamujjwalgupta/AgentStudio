@@ -49,34 +49,38 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <span className="nav-code">02</span>
             <span className="nav-label">Connections</span>
           </Link>
-          <Link className="nav-item" href="/shares">
+          <Link className="nav-item" href="/skills">
             <span className="nav-code">03</span>
+            <span className="nav-label">Skills</span>
+          </Link>
+          <Link className="nav-item" href="/shares">
+            <span className="nav-code">04</span>
             <span className="nav-label">Shares</span>
             {shares > 0 && <span className="nav-badge">{shares}</span>}
           </Link>
           {user.canManageMembers && (
             <Link className="nav-item" href="/members">
-              <span className="nav-code">04</span>
+              <span className="nav-code">05</span>
               <span className="nav-label">Members</span>
             </Link>
           )}
 
           <div className="eyebrow nav-head bare">Operate</div>
           <Link className="nav-item" href="/approvals">
-            <span className="nav-code">05</span>
+            <span className="nav-code">06</span>
             <span className="nav-label">Approvals</span>
             {pending > 0 && <span className="nav-badge">{pending}</span>}
           </Link>
           <Link className="nav-item" href="/runs">
-            <span className="nav-code">06</span>
+            <span className="nav-code">07</span>
             <span className="nav-label">Runs</span>
           </Link>
           <Link className="nav-item" href="/spend">
-            <span className="nav-code">07</span>
+            <span className="nav-code">08</span>
             <span className="nav-label">Spend</span>
           </Link>
           <Link className="nav-item" href="/audit">
-            <span className="nav-code">08</span>
+            <span className="nav-code">09</span>
             <span className="nav-label">Audit trail</span>
           </Link>
         </nav>

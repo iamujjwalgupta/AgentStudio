@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ARCHETYPES, INPUT_TYPES, inputKey, normaliseInputs, type AgentSpec, type SpecInput } from "@/lib/types";
+import { ARCHETYPES, INPUT_TYPES, inputKey, normaliseInputs, specSkillIds, type AgentSpec, type SpecInput } from "@/lib/types";
 import { formatDate, formatDateTime } from "@/lib/format";
 import VersionDiff, { DiffView } from "@/components/VersionDiff";
 import { diffSpecs } from "@/lib/spec-diff";
 
 type ToolInfo = { id: string; label: string; description: string; risk: "low" | "medium" | "high"; needs: string | null };
 type Conn = { id: string; name: string; kind: string; config: any };
+type SkillInfo = { id: string; name: string; label: string; description: string };
 
 const STEPS = ["Brief", "Data", "Instructions", "Actions", "Trigger", "Review"];
 
@@ -28,6 +29,7 @@ export default function Builder({
   publishedVer,
   tools,
   connections,
+  skills,
   versions,
   runs,
   timezone,
@@ -40,6 +42,7 @@ export default function Builder({
   publishedVer: number | null;
   tools: ToolInfo[];
   connections: Conn[];
+  skills: SkillInfo[];
   versions: any[];
   runs: any[];
   timezone: string;
@@ -167,7 +170,7 @@ export default function Builder({
           <div className="panel">
             {step === 0 && <Brief spec={spec} set={set} onCompiled={() => setStep(1)} setMsg={setMsg} />}
             {step === 1 && <Data spec={spec} set={set} connections={connections} tools={tools} />}
-            {step === 2 && <Instructions spec={spec} set={set} />}
+            {step === 2 && <Instructions spec={spec} set={set} skills={skills} />}
             {step === 3 && <Actions spec={spec} set={set} tools={tools} connections={connections} />}
             {step === 4 && <Trigger spec={spec} set={set} />}
             {step === 5 && (
@@ -175,6 +178,7 @@ export default function Builder({
                 spec={spec}
                 tools={tools}
                 connections={connections}
+                skills={skills}
                 publishedSpec={publishedSpec}
                 publishedVer={publishedVer}
                 canPublish={canPublish}
@@ -557,7 +561,18 @@ function Data({
 
 /* ── step 3 ───────────────────────────────────────────────── */
 
-function Instructions({ spec, set }: { spec: AgentSpec; set: (p: Partial<AgentSpec>) => void }) {
+function Instructions({
+  spec,
+  set,
+  skills,
+}: {
+  spec: AgentSpec;
+  set: (p: Partial<AgentSpec>) => void;
+  skills: SkillInfo[];
+}) {
+  const attached = specSkillIds(spec);
+  const toggleSkill = (id: string) =>
+    set({ skills: attached.includes(id) ? attached.filter((x) => x !== id) : [...attached, id] });
   const edit = (i: number, v: string) => set({ steps: spec.steps.map((s, x) => (x === i ? v : s)) });
   const move = (i: number, d: number) => {
     const arr = [...spec.steps];
@@ -605,6 +620,38 @@ function Instructions({ spec, set }: { spec: AgentSpec; set: (p: Partial<AgentSp
           onChange={(e) => set({ output: { ...spec.output, instructions: e.target.value } })}
         />
       </label>
+
+      {/* Skills belong with the instructions: both are know-how, not capability. */}
+      <div className="mt">
+        <h3 style={{ fontSize: 15, margin: "18px 0 2px" }}>Skills it can draw on</h3>
+        <p className="help">
+          Written once under Skills and shared across agents. The agent sees each name and summary, and reads the
+          full instructions itself when the work calls for it — so attaching one it rarely needs costs nothing.
+        </p>
+        {skills.length === 0 ? (
+          <div className="note">
+            No skills written yet. <Link href="/skills">Write one</Link> and every agent can be given it.
+          </div>
+        ) : (
+          <div className="stack">
+            {skills.map((k) => {
+              const on = attached.includes(k.id);
+              return (
+                <div key={k.id} className={`tool-row ${on ? "on" : ""}`}>
+                  <button className="tool-main" onClick={() => toggleSkill(k.id)}>
+                    <span className={`check ${on ? "on" : ""}`} />
+                    <span>
+                      <span className="tool-label">{k.label}</span>
+                      <span className="sub-line">{k.description || "No summary — the agent has nothing to judge on."}</span>
+                    </span>
+                  </button>
+                  <span className="eyebrow mono">{k.name}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -790,6 +837,7 @@ function Review({
   spec,
   tools,
   connections,
+  skills,
   publishedSpec,
   publishedVer,
   canPublish,
@@ -803,6 +851,7 @@ function Review({
   spec: AgentSpec;
   tools: ToolInfo[];
   connections: Conn[];
+  skills: SkillInfo[];
   publishedSpec: AgentSpec | null;
   publishedVer: number | null;
   canPublish: boolean;
@@ -836,7 +885,12 @@ function Review({
   // publishing saves the draft first, so this is exactly what would go live.
   const diff = publishedSpec
     ? {
-        ...diffSpecs(publishedSpec, spec, (id) => tools.find((t) => t.id === id)?.risk ?? "low"),
+        ...diffSpecs(
+          publishedSpec,
+          spec,
+          (id) => tools.find((t) => t.id === id)?.risk ?? "low",
+          (id) => skills.find((k) => k.id === id)?.label || "a skill since deleted",
+        ),
         from: `v${publishedVer}`,
         to: "this draft",
       }
@@ -849,6 +903,12 @@ function Review({
     [
       "Actions",
       spec.tools.map((t) => `${tools.find((x) => x.id === t.id)?.label}${t.gate === "approval" ? " (needs approval)" : ""}`).join(" · ") || "None",
+    ],
+    [
+      "Skills",
+      specSkillIds(spec)
+        .map((id) => skills.find((k) => k.id === id)?.label || "a skill since deleted")
+        .join(" · ") || "None",
     ],
     [
       "Trigger",

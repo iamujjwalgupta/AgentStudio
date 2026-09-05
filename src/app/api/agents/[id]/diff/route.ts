@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { one } from "@/lib/db";
+import { q, one } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { diffSpecs } from "@/lib/spec-diff";
 import { toolById } from "@/lib/tools";
@@ -44,6 +44,16 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const b = await specOf(to);
   if (!a || !b) return NextResponse.json({ error: "That version does not exist." }, { status: 404 });
 
-  const diff = diffSpecs(a.spec, b.spec, (toolId) => toolById(toolId)?.risk ?? "low");
+  // Named rather than shown as ids: a reviewer cannot judge "a skill was
+  // attached" without knowing which one.
+  const skillRows = await q<any>(`select id, label from skills where org_id = $1`, [u.orgId]);
+  const skillNames = new Map(skillRows.map((r) => [r.id, r.label]));
+
+  const diff = diffSpecs(
+    a.spec,
+    b.spec,
+    (toolId) => toolById(toolId)?.risk ?? "low",
+    (skillId) => skillNames.get(skillId) || "a skill since deleted",
+  );
   return NextResponse.json({ from: a.label, to: b.label, ...diff });
 }

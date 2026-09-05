@@ -8,7 +8,7 @@
  * an agent that has quietly become unattended. Those are classified as
  * weakening, so they can be shown first rather than buried in prose edits.
  */
-import type { AgentSpec } from "./types";
+import { specSkillIds, type AgentSpec } from "./types";
 
 export type Severity = "weakens" | "strengthens" | "neutral";
 export type ChangeKind = "added" | "removed" | "changed";
@@ -75,11 +75,14 @@ function diffList(before: string[], after: string[], section: string, noun: stri
 /**
  * @param riskOf  Risk of a tool by id. A newly granted medium or high risk tool
  *                weakens control more than a low risk one.
+ * @param skillName  Human name of a skill by id, so the diff reads as prose
+ *                   rather than as identifiers.
  */
 export function diffSpecs(
   a: AgentSpec,
   b: AgentSpec,
   riskOf: (toolId: string) => string = () => "low",
+  skillName: (skillId: string) => string = (id) => id,
 ): DiffSummary {
   const c: Change[] = [];
 
@@ -134,6 +137,17 @@ export function diffSpecs(
   const bS = new Set((b.sources || []).map((s) => s.connectionId));
   for (const id of bS) if (!aS.has(id)) c.push({ section: "Data", label: "Source granted", after: id, kind: "added", severity: "weakens" });
   for (const id of aS) if (!bS.has(id)) c.push({ section: "Data", label: "Source removed", before: id, kind: "removed", severity: "strengthens" });
+
+  /* ── skills: what it was told about how the work is done ── */
+  // Instruction, not capability. A skill cannot let an agent reach anything it
+  // could not already reach, so neither granting nor removing one is classified
+  // as weakening — but both change what it will actually do, so both are shown.
+  const aK = new Set(specSkillIds(a));
+  const bK = new Set(specSkillIds(b));
+  for (const id of bK)
+    if (!aK.has(id)) c.push({ section: "Skills", label: "Skill attached", after: skillName(id), kind: "added", severity: "neutral" });
+  for (const id of aK)
+    if (!bK.has(id)) c.push({ section: "Skills", label: "Skill removed", before: skillName(id), kind: "removed", severity: "neutral" });
 
   /* ── trigger: becoming unattended matters ── */
   if (a.trigger?.type !== b.trigger?.type) {

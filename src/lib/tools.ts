@@ -4,16 +4,21 @@ import { Client as PgClient } from "pg";
 import Papa from "papaparse";
 import { decrypt } from "./crypto";
 import { q, one } from "./db";
+import { skillName, type SkillRow } from "./skills";
 import type { Risk } from "./types";
 
 export type ToolContext = {
   orgId: string;
   userId: string;
   connections: Record<string, ConnRow>; // keyed by connection id
+  /** Skills granted to this agent, resolved by the orchestrator. */
+  skills: SkillRow[];
   storageDir: string;
   /** Model credential for this workspace, resolved by the orchestrator. */
   apiKey: string;
   model: string;
+  runId?: string;
+  agentId?: string;
 };
 
 export type ConnRow = {
@@ -31,6 +36,12 @@ export type ToolDef = {
   risk: Risk;
   /** Connection kind this tool needs, if any. */
   needs?: "postgres" | "http" | "smtp" | "slack";
+  /**
+   * Granted by the runtime rather than chosen in the builder. An implicit tool
+   * is never offered as an action and never carries a gate, so it must be
+   * incapable of doing anything a person would want to review.
+   */
+  implicit?: boolean;
   schema: Record<string, any>;
   run: (input: any, ctx: ToolContext) => Promise<any>;
 };
@@ -388,20 +399,188 @@ export const TOOLS: ToolDef[] = [
       return { file: safe, bytes: stat.size, downloadUrl: `/api/documents/${row.id}` };
     },
   },
+
+  {
+    id: "invoke_agent",
+    label: "Delegate to another agent",
+    description:
+      "Invoke another published agent in this workspace to perform a delegated subtask. " +
+      "The child agent executes with its own instructions, tools, and skills, returning its structured output.",
+    risk: "low",
+    schema: {
+      type: "object",
+      properties: {
+        agent: {
+          type: "string",
+          description: "The exact name or identifier of the published agent to invoke (e.g. 'Journal Entry Anomaly Reviewer')",
+        },
+        input: {
+          type: "string",
+          description: "Clear instructions, context, and data for the delegated agent to process",
+        },
+      },
+      required: ["agent", "input"],
+    },
+    async run({ agent, input }: { agent: string; input: string }, ctx: ToolContext) {
+      if (!agent || !agent.trim()) {
+        throw new Error("Specify the name of the agent to invoke.");
+      }
+
+      // 1. Locate the agent in the workspace
+      const target = await one<any>(
+        `select id, name, status, published_ver, draft_spec from agents
+          where org_id = $1 and (lower(name) = lower($2) or id::text = $2) limit 1`,
+        [ctx.orgId, agent.trim()],
+      );
+
+      if (!target) {
+        const available = await q<any>(
+          `select name from agents where org_id = $1 and status = 'published' order by name limit 10`,
+          [ctx.orgId],
+        );
+        throw new Error(
+          `Agent "${agent}" was not found in this workspace.` +
+            (available.length ? ` Available published agents: ${available.map((a) => a.name).join(", ")}.` : ""),
+        );
+      }
+
+      // 2. Prevent self-delegation recursion
+      if (ctx.agentId && ctx.agentId === target.id) {
+        throw new Error(`Self-delegation blocked: agent "${target.name}" cannot delegate to itself.`);
+      }
+
+      // 3. Prevent excessive delegation depth (maximum 3 levels)
+      if (ctx.runId) {
+        let depth = 0;
+        let currId: string | null = ctx.runId;
+        while (currId && depth < 5) {
+          const parentRow: any = await one(`select parent_run_id from runs where id = $1`, [currId]);
+          if (parentRow?.parent_run_id) {
+            depth++;
+            currId = parentRow.parent_run_id;
+          } else {
+            break;
+          }
+        }
+        if (depth >= 3) {
+          throw new Error(
+            `Maximum delegation depth of 3 levels exceeded (Parent -> Child -> Grandchild). Halting to prevent runaway recursion.`,
+          );
+        }
+      }
+
+      // 4. Resolve spec: published version preferred, fallback to draft_spec
+      let spec = target.draft_spec;
+      let ver = target.published_ver;
+      if (target.status === "published" && target.published_ver) {
+        const verRow = await one<any>(
+          `select spec from agent_versions where agent_id = $1 and version = $2`,
+          [target.id, target.published_ver],
+        );
+        if (verRow?.spec) spec = verRow.spec;
+      }
+
+      // 5. Spawn child run via dynamic import to avoid circular dependency
+      const { startRun } = await import("./orchestrator");
+      const childRunId = await startRun({
+        orgId: ctx.orgId,
+        agentId: target.id,
+        spec,
+        version: ver || null,
+        input: String(input || "Perform delegated task."),
+        user: { id: ctx.userId, name: "Delegating Agent" },
+        trigger: `delegation:${ctx.agentId || "parent"}`,
+        parentRunId: ctx.runId,
+      });
+
+      // 6. Inspect child run outcome
+      const childRun = await one<any>(`select * from runs where id = $1`, [childRunId]);
+      if (childRun.status === "completed") {
+        return {
+          status: "completed",
+          agent: target.name,
+          version: ver,
+          childRunId,
+          deliverable: childRun.output || "Task completed with no output text.",
+        };
+      } else if (childRun.status === "awaiting_approval") {
+        return {
+          status: "awaiting_approval",
+          agent: target.name,
+          version: ver,
+          childRunId,
+          note: `The delegated agent "${target.name}" requested a gated action that requires human review. It is waiting in the workspace Approvals queue.`,
+        };
+      } else if (childRun.status === "failed") {
+        throw new Error(
+          `Delegated agent "${target.name}" failed: ${childRun.error || "Execution terminated unexpectedly"}`,
+        );
+      } else {
+        return {
+          status: childRun.status,
+          agent: target.name,
+          version: ver,
+          childRunId,
+          output: childRun.output || `Delegated run status: ${childRun.status}`,
+        };
+      }
+    },
+  },
+
+  {
+    id: "load_skill",
+    label: "Open a skill",
+    description:
+      "Read one of the skills listed in your system prompt in full. The prompt carries only each skill's " +
+      "one-line summary; call this to get the actual instructions before you rely on one.",
+    risk: "low",
+    implicit: true,
+    schema: {
+      type: "object",
+      properties: { name: { type: "string", description: "The skill's name, exactly as listed in the prompt" } },
+      required: ["name"],
+    },
+    async run({ name }, ctx) {
+      const list = ctx.skills || [];
+      const wanted = skillName(name);
+      // Matched on the slug, then on a slugged label, because a model asked for
+      // "Invoice Reconciliation" as readily as for "invoice-reconciliation".
+      const found = list.find((s) => s.name === wanted) || list.find((s) => skillName(s.label) === wanted);
+      if (!found) {
+        throw new Error(
+          list.length
+            ? `No skill called "${name}" is attached to this agent. The ones that are: ${list.map((s) => s.name).join(", ")}.`
+            : `This agent has no skills attached, so there is nothing to open.`,
+        );
+      }
+      return { skill: found.name, description: found.description, instructions: found.instructions };
+    },
+  },
 ];
 
 export const toolById = (id: string) => TOOLS.find((t) => t.id === id);
 
+/** The tools a person may grant an agent. Implicit ones are the runtime's business. */
+export const SELECTABLE_TOOLS = TOOLS.filter((t) => !t.implicit);
+
 export const defaultGate = (risk: Risk) => (risk === "low" ? "auto" : "approval");
 
-/** Anthropic tool-use schema for the tools this agent has been granted. */
-export function anthropicTools(granted: { id: string }[]) {
-  return granted
-    .map((g) => toolById(g.id))
-    .filter(Boolean)
-    .map((t) => ({
-      name: t!.id,
-      description: t!.description,
-      input_schema: t!.schema,
-    }));
+/**
+ * Anthropic tool-use schema for the tools this agent has been granted.
+ *
+ * @param also  Implicit tool ids the runtime is adding — load_skill when the
+ *              agent has skills. A spec can never grant one of these itself.
+ */
+export function anthropicTools(granted: { id: string }[], also: string[] = []) {
+  const ids: string[] = [];
+  for (const id of [...granted.map((g) => g.id), ...also]) {
+    const def = toolById(id);
+    if (!def || ids.includes(id)) continue;
+    if (def.implicit && !also.includes(id)) continue;
+    ids.push(id);
+  }
+  return ids.map((id) => {
+    const t = toolById(id)!;
+    return { name: t.id, description: t.description, input_schema: t.schema };
+  });
 }

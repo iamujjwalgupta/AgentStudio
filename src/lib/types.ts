@@ -89,6 +89,13 @@ export type AgentSpec = {
   sources: SpecSource[];
   steps: string[];
   tools: SpecTool[];
+  /**
+   * Skills granted to this agent, by id. Instructions rather than capability:
+   * the runtime lists their names and one-line descriptions in the system
+   * prompt and the agent reads a body with load_skill when it wants one.
+   * Workspace-specific, like sources — an id means nothing in another workspace.
+   */
+  skills: string[];
   inputs: SpecInput[];
   output: { format: string; instructions: string };
   trigger: {
@@ -109,6 +116,12 @@ export type AgentSpec = {
   };
 };
 
+/** Skill ids off a spec, tolerating specs written before skills existed. */
+export function specSkillIds(spec: Partial<AgentSpec> | null | undefined): string[] {
+  const raw = (spec as any)?.skills;
+  return Array.isArray(raw) ? raw.filter((s: any) => typeof s === "string" && s) : [];
+}
+
 export const ARCHETYPES: { id: Archetype; label: string; blurb: string }[] = [
   { id: "analyst", label: "Analyst", blurb: "Investigates and answers questions from your data" },
   { id: "author", label: "Author", blurb: "Produces a document, report or message" },
@@ -126,6 +139,7 @@ export function emptySpec(): AgentSpec {
     sources: [],
     steps: [],
     tools: [],
+    skills: [],
     inputs: [],
     output: { format: "Markdown summary", instructions: "" },
     trigger: { type: "manual" },

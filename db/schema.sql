@@ -178,6 +178,10 @@ alter table runs add column if not exists dry_run boolean not null default false
 -- run can be read back knowing exactly what it was given.
 alter table runs add column if not exists inputs jsonb not null default '{}'::jsonb;
 
+-- Hierarchical multi-agent delegation: links a child run to its invoking parent run.
+alter table runs add column if not exists parent_run_id uuid references runs(id) on delete set null;
+create index if not exists idx_runs_parent on runs (parent_run_id);
+
 create table if not exists run_steps (
   id          uuid primary key default gen_random_uuid(),
   run_id      uuid not null references runs(id) on delete cascade,
@@ -291,3 +295,26 @@ create index if not exists idx_runs_agent on runs(agent_id, started_at desc);
 create index if not exists idx_steps_run on run_steps(run_id, idx);
 create index if not exists idx_approvals_status on approvals(org_id, status);
 create index if not exists idx_audit_org on audit_events(org_id, at desc);
+
+-- Skills: reusable know-how, written once in the workspace and attached to any
+-- number of agents. A skill is not a capability — tools decide what an agent may
+-- do, skills describe how the work is done here. Agents reference them by id
+-- from the spec, so versioning, diffing and publishing need no new machinery.
+create table if not exists skills (
+  id           uuid primary key default gen_random_uuid(),
+  org_id       uuid not null references orgs(id) on delete cascade,
+  -- The handle the agent passes to load_skill. Slugged, so it is unambiguous.
+  name         text not null,
+  label        text not null default '',
+  -- The one line that sits in every attached agent's system prompt.
+  description  text not null default '',
+  -- The body, markdown, loaded on demand rather than pasted into every prompt.
+  instructions text not null default '',
+  created_by   uuid references users(id),
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+-- Two skills answering to the same name would make load_skill a coin toss.
+create unique index if not exists uniq_skill_name_per_org on skills (org_id, name);
+create index if not exists idx_skills_org on skills (org_id, updated_at desc);

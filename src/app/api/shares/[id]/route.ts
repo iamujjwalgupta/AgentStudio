@@ -9,8 +9,8 @@ export const runtime = "nodejs";
 /**
  * Accept or decline an offer. Only the person it was sent to may decide.
  * Accepting copies the snapshotted spec into their workspace as a draft with
- * its sources stripped: connection ids belong to the sending workspace and mean
- * nothing here, so the recipient grants their own before publishing.
+ * its sources and skills stripped: those ids belong to the sending workspace and
+ * mean nothing here, so the recipient grants their own before publishing.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const u = await requireUser();
@@ -44,9 +44,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const spec: AgentSpec = {
     ...emptySpec(),
     ...incoming,
-    // The only workspace-specific part of a spec. Cleared so nothing points at
-    // a connection this workspace does not own.
+    // The workspace-specific parts of a spec. Cleared so nothing points at a
+    // connection or a skill this workspace does not own — a skill id from
+    // another workspace resolves to nothing here, and might one day resolve to
+    // something else entirely.
     sources: [],
+    skills: [],
   };
 
   const copy = await one<any>(
