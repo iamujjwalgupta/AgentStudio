@@ -7,7 +7,14 @@ export const pool =
   new Pool({
     connectionString: process.env.DATABASE_URL,
     max: 10,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
   });
+
+// Prevent unhandled idle client errors from crashing the Node process
+pool.on("error", (err) => {
+  console.error("[PostgreSQL Pool Error]", err);
+});
 
 if (process.env.NODE_ENV !== "production") g._asPool = pool;
 

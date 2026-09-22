@@ -6,6 +6,7 @@ import { decrypt } from "./crypto";
 import { q, one } from "./db";
 import { skillName, type SkillRow } from "./skills";
 import type { Risk } from "./types";
+import { assertSafeUrl } from "./ssrf";
 
 export type ToolContext = {
   orgId: string;
@@ -35,7 +36,7 @@ export type ToolDef = {
   description: string;
   risk: Risk;
   /** Connection kind this tool needs, if any. */
-  needs?: "postgres" | "http" | "smtp" | "slack";
+  needs?: "postgres" | "http" | "smtp" | "slack" | "msteams" | "s3" | "jira" | "github" | "redis";
   /**
    * Granted by the runtime rather than chosen in the builder. An implicit tool
    * is never offered as an action and never carries a gate, so it must be
@@ -163,8 +164,8 @@ export const TOOLS: ToolDef[] = [
       required: ["url"],
     },
     async run({ url }) {
-      if (!/^https?:\/\//i.test(url)) throw new Error("URL must start with http:// or https://");
-      const res = await fetch(url, {
+      const safe = await assertSafeUrl(url);
+      const res = await fetch(safe.toString(), {
         headers: { "user-agent": "AgentStudio/1.0" },
         signal: AbortSignal.timeout(20_000),
       });
@@ -273,6 +274,7 @@ export const TOOLS: ToolDef[] = [
       const base = (c.config?.baseUrl || "").replace(/\/$/, "");
       const url = new URL(base + (p.startsWith("/") ? p : "/" + p));
       for (const [k, v] of Object.entries(query || {})) url.searchParams.set(k, String(v));
+      const safe = await assertSafeUrl(url.toString());
       const headers: Record<string, string> = { accept: "application/json", ...(c.config?.headers || {}) };
       const token = secretOf(c);
       if (token) {
@@ -401,6 +403,393 @@ export const TOOLS: ToolDef[] = [
   },
 
   {
+    id: "sql_execute",
+    label: "Execute SQL write statement",
+    description:
+      "Run an INSERT, UPDATE, or DELETE query against a connected Postgres database. Requires approval gating and explicit write permissions enabled on the connection.",
+    risk: "high",
+    needs: "postgres",
+    schema: {
+      type: "object",
+      properties: {
+        connection: { type: "string", description: "Connection name, optional if only one is granted" },
+        sql: { type: "string", description: "A single INSERT, UPDATE, or DELETE statement" },
+      },
+      required: ["sql"],
+    },
+    async run({ connection, sql }, ctx) {
+      const c = connOf(ctx, "postgres", connection);
+      if (c.config?.allowWrites !== "yes") {
+        throw new Error(
+          `Write execution is disabled on connection "${c.name}". Enable "Allow write statements" in Connections settings to allow mutations.`
+        );
+      }
+      const trimmed = String(sql || "").trim().replace(/;+\s*$/, "");
+      if (!trimmed) throw new Error("SQL statement cannot be empty.");
+      if (trimmed.includes(";")) {
+        throw new Error("Multiple SQL statements in a single execution are prohibited for security.");
+      }
+      if (!/^(insert\s+into|update\b|delete\s+from)\b/i.test(trimmed)) {
+        throw new Error(
+          "Only INSERT, UPDATE, or DELETE statements are permitted with sql_execute. Use sql_query for read-only SELECT queries."
+        );
+      }
+      const client = new PgClient({ connectionString: secretOf(c), connectionTimeoutMillis: 15_000 });
+      await client.connect();
+      try {
+        const r = await client.query(trimmed);
+        return {
+          connection: c.name,
+          command: r.command,
+          rowCount: r.rowCount,
+          rows: (r.rows || []).slice(0, 50),
+        };
+      } finally {
+        await client.end();
+      }
+    },
+  },
+
+  {
+    id: "post_teams_message",
+    label: "Post to Microsoft Teams",
+    description: "Post an announcement, summary, or alert to a Microsoft Teams channel via incoming webhook.",
+    risk: "medium",
+    needs: "msteams",
+    schema: {
+      type: "object",
+      properties: {
+        connection: { type: "string", description: "Connection name, optional if only one is granted" },
+        title: { type: "string", description: "Card header or message title" },
+        text: { type: "string", description: "Message body in markdown or plain text" },
+      },
+      required: ["text"],
+    },
+    async run({ connection, title, text }, ctx) {
+      const c = connOf(ctx, "msteams", connection);
+      const webhookUrl = secretOf(c);
+      const payload = {
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        themeColor: "464EB8",
+        summary: title || "Message from Agent Studio",
+        ...(title ? { title } : {}),
+        text,
+      };
+      const res = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const out = await res.text().catch(() => "");
+      if (!res.ok) throw new Error(`Teams webhook rejected the message: ${out || `HTTP ${res.status}`}`);
+      return { posted: true, channel: c.name };
+    },
+  },
+
+  {
+    id: "s3_upload_file",
+    label: "Upload to AWS S3",
+    description: "Upload a file or raw content to an AWS S3 (or S3-compatible) storage bucket with SigV4 authentication.",
+    risk: "medium",
+    needs: "s3",
+    schema: {
+      type: "object",
+      properties: {
+        connection: { type: "string", description: "Connection name, optional if only one is granted" },
+        key: { type: "string", description: "Destination file path/key inside the bucket (e.g. reports/audit.csv)" },
+        content: { type: "string", description: "File text, CSV, JSON, or markdown content to upload" },
+        contentType: { type: "string", description: "MIME type, e.g. text/csv, application/json, text/plain" },
+      },
+      required: ["key", "content"],
+    },
+    async run({ connection, key, content, contentType }, ctx) {
+      const c = connOf(ctx, "s3", connection);
+      const { uploadToS3 } = await import("./aws-s3");
+      const s3Config = {
+        bucket: c.config?.bucket || "",
+        region: c.config?.region || "us-east-1",
+        accessKeyId: c.config?.accessKeyId || "",
+        endpoint: c.config?.endpoint,
+      };
+      if (!s3Config.bucket) throw new Error(`S3 connection "${c.name}" is missing a bucket name.`);
+      const r = await uploadToS3(s3Config, secretOf(c), key, content, contentType || "text/plain");
+      if (!r.ok) throw new Error(`S3 upload failed: ${r.error}`);
+      return { uploaded: true, bucket: s3Config.bucket, key, url: r.url };
+    },
+  },
+
+  {
+    id: "jira_create_issue",
+    label: "Create Jira issue",
+    description: "Create a new issue, task, or bug in Atlassian Jira.",
+    risk: "medium",
+    needs: "jira",
+    schema: {
+      type: "object",
+      properties: {
+        connection: { type: "string", description: "Connection name, optional if only one is granted" },
+        project: { type: "string", description: "Jira Project key (e.g. PROJ). Defaults to connection configuration if omitted." },
+        summary: { type: "string", description: "Issue summary or title" },
+        description: { type: "string", description: "Detailed issue description" },
+        issueType: { type: "string", description: "Issue type name, e.g. Task, Bug, Story (defaults to Task)" },
+      },
+      required: ["summary", "description"],
+    },
+    async run({ connection, project, summary, description, issueType }, ctx) {
+      const c = connOf(ctx, "jira", connection);
+      const host = (c.config?.host || "").replace(/\/$/, "");
+      const projectKey = project || c.config?.project;
+      if (!projectKey) throw new Error(`Specify a project key or configure a default project on the Jira connection "${c.name}".`);
+      const email = c.config?.email || "";
+      const auth = Buffer.from(`${email}:${secretOf(c)}`).toString("base64");
+      const payload = {
+        fields: {
+          project: { key: projectKey },
+          summary,
+          issuetype: { name: issueType || "Task" },
+          description: {
+            type: "doc",
+            version: 1,
+            content: [
+              {
+                type: "paragraph",
+                content: [{ type: "text", text: description }],
+              },
+            ],
+          },
+        },
+      };
+      const res = await fetch(`${host}/rest/api/3/issue`, {
+        method: "POST",
+        headers: {
+          authorization: `Basic ${auth}`,
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const errs = data?.errorMessages?.join(", ") || JSON.stringify(data?.errors || `HTTP ${res.status}`);
+        throw new Error(`Jira issue creation failed: ${errs}`);
+      }
+      return {
+        id: data.id,
+        key: data.key,
+        url: `${host}/browse/${data.key}`,
+      };
+    },
+  },
+
+  {
+    id: "jira_search_issues",
+    label: "Search Jira issues",
+    description: "Search Jira issues using JQL (Jira Query Language) to retrieve status, assignees, and summaries.",
+    risk: "low",
+    needs: "jira",
+    schema: {
+      type: "object",
+      properties: {
+        connection: { type: "string", description: "Connection name, optional if only one is granted" },
+        jql: { type: "string", description: "JQL query string, e.g. project = FIN AND status != Done ORDER BY created DESC" },
+        limit: { type: "number", description: "Maximum number of issues to return (default 20, max 50)" },
+      },
+      required: ["jql"],
+    },
+    async run({ connection, jql, limit }, ctx) {
+      const c = connOf(ctx, "jira", connection);
+      const host = (c.config?.host || "").replace(/\/$/, "");
+      const email = c.config?.email || "";
+      const auth = Buffer.from(`${email}:${secretOf(c)}`).toString("base64");
+      const max = Math.min(limit || 20, 50);
+      const url = `${host}/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=${max}&fields=summary,status,assignee,created,priority,issuetype`;
+      const res = await fetch(url, {
+        headers: {
+          authorization: `Basic ${auth}`,
+          accept: "application/json",
+        },
+        signal: AbortSignal.timeout(20_000),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const errs = data?.errorMessages?.join(", ") || `HTTP ${res.status}`;
+        throw new Error(`Jira search failed: ${errs}`);
+      }
+      const issues = (data.issues || []).map((i: any) => ({
+        key: i.key,
+        summary: i.fields?.summary,
+        status: i.fields?.status?.name,
+        priority: i.fields?.priority?.name,
+        type: i.fields?.issuetype?.name,
+        assignee: i.fields?.assignee?.displayName || "Unassigned",
+        created: i.fields?.created,
+        url: `${host}/browse/${i.key}`,
+      }));
+      return { total: data.total, count: issues.length, issues };
+    },
+  },
+
+  {
+    id: "github_create_issue",
+    label: "Create GitHub issue",
+    description: "Create an issue in a GitHub repository with a title, markdown body, and optional labels.",
+    risk: "medium",
+    needs: "github",
+    schema: {
+      type: "object",
+      properties: {
+        connection: { type: "string", description: "Connection name, optional if only one is granted" },
+        repo: { type: "string", description: "Target repository in 'owner/repo' format. Defaults to connection configuration if omitted." },
+        title: { type: "string", description: "Issue title" },
+        body: { type: "string", description: "Issue description in GitHub markdown" },
+        labels: { type: "array", items: { type: "string" }, description: "Optional labels to attach" },
+      },
+      required: ["title", "body"],
+    },
+    async run({ connection, repo, title, body, labels }, ctx) {
+      const c = connOf(ctx, "github", connection);
+      const targetRepo = repo || c.config?.repo;
+      if (!targetRepo) throw new Error(`Specify a target repo (owner/repo) or configure a default repo on GitHub connection "${c.name}".`);
+      const token = secretOf(c);
+      const res = await fetch(`https://api.github.com/repos/${targetRepo}/issues`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "user-agent": "Agent-Studio",
+          accept: "application/vnd.github.v3+json",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ title, body, labels: labels || [] }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(`GitHub issue creation failed: ${data.message || `HTTP ${res.status}`}`);
+      return {
+        number: data.number,
+        title: data.title,
+        url: data.html_url,
+        state: data.state,
+      };
+    },
+  },
+
+  {
+    id: "github_read_file",
+    label: "Read GitHub file",
+    description: "Fetch and inspect the contents of a file or code repository from GitHub.",
+    risk: "low",
+    needs: "github",
+    schema: {
+      type: "object",
+      properties: {
+        connection: { type: "string", description: "Connection name, optional if only one is granted" },
+        repo: { type: "string", description: "Repository in 'owner/repo' format. Defaults to connection configuration if omitted." },
+        path: { type: "string", description: "Path to file in repo, e.g. src/index.ts or docs/README.md" },
+        ref: { type: "string", description: "Branch, tag, or commit SHA (optional, defaults to main/default branch)" },
+      },
+      required: ["path"],
+    },
+    async run({ connection, repo, path: p, ref }, ctx) {
+      const c = connOf(ctx, "github", connection);
+      const targetRepo = repo || c.config?.repo;
+      if (!targetRepo) throw new Error(`Specify a target repo (owner/repo) or configure a default repo on GitHub connection "${c.name}".`);
+      const token = secretOf(c);
+      const cleanPath = p.replace(/^\//, "");
+      const url = new URL(`https://api.github.com/repos/${targetRepo}/contents/${cleanPath}`);
+      if (ref) url.searchParams.set("ref", ref);
+      const res = await fetch(url.toString(), {
+        headers: {
+          authorization: `Bearer ${token}`,
+          "user-agent": "Agent-Studio",
+          accept: "application/vnd.github.v3+json",
+        },
+        signal: AbortSignal.timeout(20_000),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(`GitHub file read failed: ${data.message || `HTTP ${res.status}`}`);
+      if (Array.isArray(data)) {
+        return {
+          type: "directory",
+          entries: data.map((item: any) => ({ name: item.name, path: item.path, type: item.type, size: item.size })),
+        };
+      }
+      const content = data.content && data.encoding === "base64"
+        ? Buffer.from(data.content, "base64").toString("utf8")
+        : data.content || "";
+      return {
+        name: data.name,
+        path: data.path,
+        size: data.size,
+        content: clip(content, 20_000),
+      };
+    },
+  },
+
+  {
+    id: "kv_get",
+    label: "Read key-value store",
+    description: "Retrieve a cached string value or state for a given key from connected Redis store.",
+    risk: "low",
+    needs: "redis",
+    schema: {
+      type: "object",
+      properties: {
+        connection: { type: "string", description: "Connection name, optional if only one is granted" },
+        key: { type: "string", description: "Key name to retrieve" },
+      },
+      required: ["key"],
+    },
+    async run({ connection, key }, ctx) {
+      const c = connOf(ctx, "redis", connection);
+      const { executeRedis } = await import("./redis-client");
+      const prefix = c.config?.keyPrefix ? `${c.config.keyPrefix}:` : "";
+      const fullKey = prefix ? `${prefix}${key}` : key;
+      const val = await executeRedis(
+        { host: c.config?.host, port: c.config?.port, tls: Boolean(c.config?.tls) },
+        secretOf(c),
+        ["GET", fullKey]
+      );
+      return { key, found: val !== null, value: val };
+    },
+  },
+
+  {
+    id: "kv_set",
+    label: "Write key-value store",
+    description: "Store a string value or state under a key in connected Redis store, with optional expiration TTL.",
+    risk: "medium",
+    needs: "redis",
+    schema: {
+      type: "object",
+      properties: {
+        connection: { type: "string", description: "Connection name, optional if only one is granted" },
+        key: { type: "string", description: "Key name to store" },
+        value: { type: "string", description: "String value or JSON string to store" },
+        ttlSeconds: { type: "number", description: "Optional expiration time in seconds" },
+      },
+      required: ["key", "value"],
+    },
+    async run({ connection, key, value, ttlSeconds }, ctx) {
+      const c = connOf(ctx, "redis", connection);
+      const { executeRedis } = await import("./redis-client");
+      const prefix = c.config?.keyPrefix ? `${c.config.keyPrefix}:` : "";
+      const fullKey = prefix ? `${prefix}${key}` : key;
+      const args = ttlSeconds && ttlSeconds > 0
+        ? ["SET", fullKey, String(value), "EX", String(Math.floor(ttlSeconds))]
+        : ["SET", fullKey, String(value)];
+      await executeRedis(
+        { host: c.config?.host, port: c.config?.port, tls: Boolean(c.config?.tls) },
+        secretOf(c),
+        args
+      );
+      return { key, set: true, ttlSeconds: ttlSeconds || null };
+    },
+  },
+
+  {
     id: "invoke_agent",
     label: "Delegate to another agent",
     description:
@@ -491,6 +880,7 @@ export const TOOLS: ToolDef[] = [
         user: { id: ctx.userId, name: "Delegating Agent" },
         trigger: `delegation:${ctx.agentId || "parent"}`,
         parentRunId: ctx.runId,
+        waitForCompletion: true,
       });
 
       // 6. Inspect child run outcome

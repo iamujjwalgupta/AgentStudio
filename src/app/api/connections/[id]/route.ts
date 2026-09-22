@@ -75,6 +75,82 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
         detail: res.status === 401 ? "The API key was rejected." : res.status === 404 ? `No such model: ${model}` : why,
       });
     }
+    if (c.kind === "msteams") {
+      const res = await fetch(secret, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          "@type": "MessageCard",
+          "@context": "http://schema.org/extensions",
+          summary: "Agent Studio Connection Test",
+          text: "Agent Studio connection test — you can ignore this.",
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const t = await res.text().catch(() => "");
+      return NextResponse.json({ ok: res.ok, detail: res.ok ? "Test message posted to Teams" : (t || `HTTP ${res.status}`) });
+    }
+    if (c.kind === "s3") {
+      const { testS3Connection } = await import("@/lib/aws-s3");
+      const r = await testS3Connection(
+        {
+          bucket: c.config?.bucket || "",
+          region: c.config?.region,
+          accessKeyId: c.config?.accessKeyId || "",
+          endpoint: c.config?.endpoint,
+        },
+        secret
+      );
+      return NextResponse.json(r);
+    }
+    if (c.kind === "jira") {
+      const host = (c.config?.host || "").replace(/\/$/, "");
+      const email = c.config?.email || "";
+      const auth = Buffer.from(`${email}:${secret}`).toString("base64");
+      const res = await fetch(`${host}/rest/api/3/myself`, {
+        headers: {
+          authorization: `Basic ${auth}`,
+          accept: "application/json",
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return NextResponse.json({ ok: true, detail: `Jira connected as ${data.displayName || email}` });
+      }
+      return NextResponse.json({ ok: false, detail: `Jira rejected credentials (HTTP ${res.status})` });
+    }
+    if (c.kind === "github") {
+      const repo = c.config?.repo?.trim();
+      const url = repo ? `https://api.github.com/repos/${repo}` : "https://api.github.com/user";
+      const res = await fetch(url, {
+        headers: {
+          authorization: `Bearer ${secret}`,
+          "user-agent": "Agent-Studio",
+          accept: "application/vnd.github.v3+json",
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const name = data.full_name || data.login || "Token valid";
+        return NextResponse.json({ ok: true, detail: `GitHub connected · ${name}` });
+      }
+      const err = await res.json().catch(() => ({}));
+      return NextResponse.json({ ok: false, detail: err.message || `GitHub returned HTTP ${res.status}` });
+    }
+    if (c.kind === "redis") {
+      const { testRedisConnection } = await import("@/lib/redis-client");
+      const r = await testRedisConnection(
+        {
+          host: c.config?.host,
+          port: c.config?.port,
+          tls: Boolean(c.config?.tls),
+        },
+        secret
+      );
+      return NextResponse.json(r);
+    }
     return NextResponse.json({ ok: true, detail: "Nothing to test for this type." });
   } catch (e: any) {
     return NextResponse.json({ ok: false, detail: e?.message || String(e) });

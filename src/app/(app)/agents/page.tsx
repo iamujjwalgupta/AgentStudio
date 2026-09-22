@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { q } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import NewAgentButton from "@/components/NewAgentButton";
@@ -28,7 +29,17 @@ export default async function AgentsPage() {
           <h1>Agents</h1>
           <p className="sub">Describe work in plain language. Publish it as an agent that runs with the tools you grant it.</p>
         </div>
-        <NewAgentButton />
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <Link href="/sandbox" className="btn btn-ghost" style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+              <line x1="12" y1="22.08" x2="12" y2="12" />
+            </svg>
+            Explore Sandboxes
+          </Link>
+          <NewAgentButton />
+        </div>
       </header>
 
       {dbError && <div className="error">The database is not reachable: {dbError}</div>}

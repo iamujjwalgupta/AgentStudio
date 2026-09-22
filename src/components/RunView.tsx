@@ -36,14 +36,72 @@ export default function RunView({ runId }: { runId: string }) {
   }, [runId]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    let sse: EventSource | null = null;
+    let pollInterval: NodeJS.Timeout | null = null;
 
-  useEffect(() => {
-    if (data?.run?.status !== "running") return;
-    const t = setInterval(load, 2000);
-    return () => clearInterval(t);
-  }, [data?.run?.status, load]);
+    try {
+      sse = new EventSource(`/api/runs/${runId}/stream`);
+
+      sse.addEventListener("init", (e) => {
+        try {
+          const payload = JSON.parse(e.data);
+          setData(payload);
+        } catch {}
+      });
+
+      sse.addEventListener("step", (e) => {
+        try {
+          const newStep = JSON.parse(e.data);
+          setData((prev: any) => {
+            if (!prev) return prev;
+            const exists = prev.steps?.some((s: any) => s.id === newStep.id || s.idx === newStep.idx);
+            if (exists) return prev;
+            return {
+              ...prev,
+              steps: [...(prev.steps || []), newStep].sort((a: any, b: any) => a.idx - b.idx),
+            };
+          });
+        } catch {}
+      });
+
+      sse.addEventListener("approvals", (e) => {
+        try {
+          const apprs = JSON.parse(e.data);
+          setData((prev: any) => (prev ? { ...prev, approvals: apprs } : prev));
+        } catch {}
+      });
+
+      sse.addEventListener("done", (e) => {
+        try {
+          const info = JSON.parse(e.data);
+          setData((prev: any) => {
+            if (!prev || !prev.run) return prev;
+            return {
+              ...prev,
+              run: { ...prev.run, status: info.status, output: info.output, error: info.error },
+            };
+          });
+        } catch {}
+        if (sse) sse.close();
+      });
+
+      sse.onerror = () => {
+        if (sse) sse.close();
+        if (!pollInterval) {
+          pollInterval = setInterval(load, 4000);
+        }
+      };
+    } catch {
+      pollInterval = setInterval(load, 3000);
+    }
+
+    load();
+
+    return () => {
+      if (sse) sse.close();
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [runId, load]);
 
   const decide = async (approvalId: string, decision: "approved" | "rejected", thenCreateSkill = false) => {
     setDeciding(approvalId);

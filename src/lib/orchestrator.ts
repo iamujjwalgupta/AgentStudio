@@ -7,8 +7,10 @@ import { notify, approverEmails } from "./notify";
 import { TOOLS, toolById, anthropicTools, type ConnRow, type ToolContext } from "./tools";
 import { skillsFor } from "./skills";
 import { specSkillIds, type AgentSpec } from "./types";
+import { maskPII, checkRateLimit } from "./guardrails";
 
 const STORAGE = process.env.STORAGE_DIR || path.join(process.cwd(), "storage");
+
 
 type RunRow = {
   id: string;
@@ -73,6 +75,45 @@ async function nextIdx(runId: string) {
   return Number(r?.n ?? 0);
 }
 
+function applyDLP(content: string, spec: AgentSpec): string {
+  if (!spec.guardrails?.dlpEnabled || !content) return content;
+  return maskPII(content, {
+    enabled: true,
+    redactCreditCards: spec.guardrails.redactCreditCards,
+    redactEmails: spec.guardrails.redactEmails,
+    redactCredentials: spec.guardrails.redactCredentials,
+    redactPhoneNumbers: spec.guardrails.redactPhoneNumbers,
+    customPatterns: spec.guardrails.customDlpPatterns,
+  }).text;
+}
+
+function safeTrimToolOutput(out: any, maxChars = 20000): string {
+  if (out === null || out === undefined) return "null";
+  if (typeof out === "string") {
+    if (out.length <= maxChars) return out;
+    return out.slice(0, maxChars) + `\n...[truncated, ${out.length} chars total]`;
+  }
+  if (Array.isArray(out)) {
+    if (out.length > 50) {
+      const sample = out.slice(0, 50);
+      return JSON.stringify(
+        {
+          items: sample,
+          _meta: `Truncated array: showing first 50 of ${out.length} items`,
+        },
+        null,
+        2
+      );
+    }
+  }
+  const serialized = JSON.stringify(out, null, 2);
+  if (serialized.length <= maxChars) return serialized;
+  return JSON.stringify({
+    preview: JSON.stringify(out).slice(0, maxChars),
+    _meta: `Truncated large object output (${serialized.length} chars total)`,
+  });
+}
+
 export async function startRun(opts: {
   orgId: string;
   agentId: string;
@@ -84,7 +125,36 @@ export async function startRun(opts: {
   dryRun?: boolean;
   inputs?: Record<string, string>;
   parentRunId?: string;
+  waitForCompletion?: boolean;
 }) {
+  // 1. Enforce per-agent rate limit
+  if (opts.spec.guardrails?.rateLimitRpm) {
+    const rateCheck = checkRateLimit(
+      opts.agentId,
+      opts.spec.guardrails.rateLimitRpm,
+      opts.spec.guardrails.rateLimitTpm
+    );
+    if (!rateCheck.allowed) {
+      throw new Error(
+        `Rate limit exceeded for agent (${opts.spec.guardrails.rateLimitRpm} RPM). Please retry in ${rateCheck.retryAfterSeconds}s.`
+      );
+    }
+  }
+
+  // 2. Enforce DLP masking if enabled
+  let effectiveInput = opts.input;
+  if (opts.spec.guardrails?.dlpEnabled) {
+    const dlpResult = maskPII(opts.input, {
+      enabled: true,
+      redactCreditCards: opts.spec.guardrails.redactCreditCards,
+      redactEmails: opts.spec.guardrails.redactEmails,
+      redactCredentials: opts.spec.guardrails.redactCredentials,
+      redactPhoneNumbers: opts.spec.guardrails.redactPhoneNumbers,
+      customPatterns: opts.spec.guardrails.customDlpPatterns,
+    });
+    effectiveInput = dlpResult.text;
+  }
+
   const run = await one<any>(
     `insert into runs (org_id, agent_id, version, spec, trigger, input, state, started_by, dry_run, inputs, parent_run_id)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id`,
@@ -94,8 +164,8 @@ export async function startRun(opts: {
       opts.version,
       JSON.stringify(opts.spec),
       opts.dryRun ? "rehearsal" : opts.trigger || "manual",
-      opts.input,
-      JSON.stringify({ messages: [{ role: "user", content: opts.input || "Begin." }], partial: [], steps: 0 }),
+      effectiveInput,
+      JSON.stringify({ messages: [{ role: "user", content: effectiveInput || "Begin." }], partial: [], steps: 0 }),
       opts.user.id,
       Boolean(opts.dryRun),
       JSON.stringify(opts.inputs || {}),
@@ -104,12 +174,24 @@ export async function startRun(opts: {
   );
   await audit(opts.orgId, opts.user, "Started run", "run", run.id, {
     agentId: opts.agentId,
-    input: opts.input,
+    input: effectiveInput,
     ...(opts.parentRunId ? { parentRunId: opts.parentRunId } : {}),
   });
-  await advance(run.id, opts.user);
+
+  if (opts.waitForCompletion) {
+    await advance(run.id, opts.user);
+  } else {
+    // Non-blocking asynchronous dispatch for HTTP route callers
+    setImmediate(() => {
+      advance(run.id, opts.user).catch((err) => {
+        console.error(`[Async advance error] Run ${run.id}:`, err);
+      });
+    });
+  }
+
   return run.id as string;
 }
+
 
 /** How long a worker may hold a run before another may take it over. */
 const LEASE = "5 minutes";
@@ -144,6 +226,17 @@ export async function advance(
   if (run.status !== "running") return;
 
   const spec = run.spec;
+
+  // Multi-Agent Swarm Orchestration execution
+  if (spec.swarm?.enabled && spec.swarm.workers && spec.swarm.workers.length > 0) {
+    const { executeSwarmRun } = await import("./swarm-orchestrator");
+    await executeSwarmRun({
+      runId,
+      run: run as any,
+      user,
+    });
+    return;
+  }
 
   // Setup can fail too — no model key, an unreachable database. It must fail the
   // run rather than throw past it, or the run is stranded on 'running' forever.
@@ -187,7 +280,16 @@ export async function advance(
   let cacheRead = 0;
   let cacheWrite = 0;
 
+  let heartbeatTimer: NodeJS.Timeout | null = null;
+
   try {
+    // Active background heartbeat refreshes lease lock every 45 seconds while worker runs
+    heartbeatTimer = setInterval(async () => {
+      try {
+        await q(`update runs set locked_at = now() where id = $1 and status = 'running'`, [runId]);
+      } catch {}
+    }, 45_000);
+
     while (true) {
       // Keeps the lease alive while this worker is still doing the work.
       await q(`update runs set locked_at = now() where id = $1`, [runId]);
@@ -209,7 +311,13 @@ export async function advance(
       const res: any = await client.messages.create({
         model,
         max_tokens: 4000,
-        system,
+        system: [
+          {
+            type: "text",
+            text: system,
+            cache_control: { type: "ephemeral" },
+          },
+        ] as any,
         messages,
         ...(tools.length ? { tools: tools as any } : {}),
       });
@@ -239,7 +347,7 @@ export async function advance(
       }
 
       if (!toolUses.length) {
-        await finish(runId, "completed", text, null, usage());
+        await finish(runId, "completed", text, null, usage(), spec);
         await audit(run.org_id, user, "Run completed", "run", runId, {});
         return;
       }
@@ -296,7 +404,9 @@ export async function advance(
         const ts = Date.now();
         try {
           const out = await def.run(use.input, ctx);
-          results.push({ type: "tool_result", tool_use_id: use.id, content: JSON.stringify(out).slice(0, 60000) });
+          const safeOut = safeTrimToolOutput(out);
+          const maskedOut = applyDLP(safeOut, spec);
+          results.push({ type: "tool_result", tool_use_id: use.id, content: maskedOut });
           await addStep(runId, await nextIdx(runId), {
             kind: "tool",
             tool: use.name,
@@ -345,6 +455,8 @@ export async function advance(
     }
   } catch (err: any) {
     await finish(runId, "failed", null, err?.message || String(err), usage());
+  } finally {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
   }
 }
 
@@ -475,7 +587,20 @@ async function finish(
   output: string | null,
   error: string | null,
   u: RunUsage,
+  spec?: AgentSpec,
 ) {
+  let effectiveOutput = output;
+  if (effectiveOutput && spec?.guardrails?.dlpEnabled) {
+    effectiveOutput = maskPII(effectiveOutput, {
+      enabled: true,
+      redactCreditCards: spec.guardrails.redactCreditCards,
+      redactEmails: spec.guardrails.redactEmails,
+      redactCredentials: spec.guardrails.redactCredentials,
+      redactPhoneNumbers: spec.guardrails.redactPhoneNumbers,
+      customPatterns: spec.guardrails.customDlpPatterns,
+    }).text;
+  }
+
   // Cost is priced now and stored, so a later rate change never rewrites history.
   await q(
     `update runs set status = $2, output = $3, error = $4, ended_at = now(), locked_at = null, model = coalesce($7, model),
@@ -483,9 +608,10 @@ async function finish(
        cache_read_tokens = cache_read_tokens + $8, cache_write_tokens = cache_write_tokens + $9,
        cost_usd = cost_usd + $10
      where id = $1`,
-    [runId, status, output, error, u.inTok, u.outTok, u.model || null, u.cacheRead, u.cacheWrite, costOf(toUsage(u))],
+    [runId, status, effectiveOutput, error, u.inTok, u.outTok, u.model || null, u.cacheRead, u.cacheWrite, costOf(toUsage(u))],
   );
   if (status === "failed") await announceFailure(runId, error);
 }
 
 export { TOOLS };
+

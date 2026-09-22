@@ -35,8 +35,14 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
   // Every skill the workspace has, not only the attached ones: the builder is
   // where they get attached, so it needs the whole list to offer.
   const skills = await q<any>(
-    `select id, name, label, description from skills where org_id = $1 order by label`,
+    `select id, name, label, description, instructions from skills where org_id = $1 order by label`,
     [u.orgId],
+  );
+
+  // Query other agents in the workspace for multi-agent swarm delegation
+  const workspaceAgents = await q<any>(
+    `select id, name, description, archetype, status from agents where org_id = $1 and id <> $2 order by name`,
+    [u.orgId, id],
   );
 
   return (
@@ -45,6 +51,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
       initialSpec={{ ...emptySpec(), ...(agent.draft_spec || {}) }}
       status={agent.status}
       publishedVer={agent.published_ver}
+      updatedAt={agent.updated_at ? new Date(agent.updated_at).toISOString() : new Date().toISOString()}
       tools={SELECTABLE_TOOLS.map((t) => ({ id: t.id, label: t.label, description: t.description, risk: t.risk, needs: t.needs ?? null }))}
       connections={connections}
       skills={skills}
@@ -53,6 +60,7 @@ export default async function AgentPage({ params }: { params: Promise<{ id: stri
       timezone={u.timezone}
       publishedSpec={published?.spec ?? null}
       canPublish={u.canPublish}
+      workspaceAgents={workspaceAgents}
     />
   );
 }

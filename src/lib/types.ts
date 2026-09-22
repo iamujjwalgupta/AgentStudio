@@ -113,8 +113,34 @@ export type AgentSpec = {
     escalateOnAmbiguity: boolean;
     stayInScope: boolean;
     extra: string;
+    dlpEnabled?: boolean;
+    redactCreditCards?: boolean;
+    redactEmails?: boolean;
+    redactCredentials?: boolean;
+    redactPhoneNumbers?: boolean;
+    customDlpPatterns?: { name: string; pattern: string; replacement: string }[];
+    rateLimitRpm?: number;
+    rateLimitTpm?: number;
+  };
+  swarm?: {
+    enabled: boolean;
+    strategy: "router" | "parallel" | "sequential";
+    supervisorRole?: string;
+    workers: SwarmWorker[];
   };
 };
+
+export interface SwarmWorker {
+  id?: string;
+  agentId?: string;
+  name: string;
+  role: string;
+  type?: "internal" | "external";
+  endpointUrl?: string;
+  apiKey?: string;
+  protocol?: "a2a" | "http";
+  taskPrompt?: string;
+}
 
 /** Skill ids off a spec, tolerating specs written before skills existed. */
 export function specSkillIds(spec: Partial<AgentSpec> | null | undefined): string[] {
@@ -149,6 +175,19 @@ export function emptySpec(): AgentSpec {
       escalateOnAmbiguity: true,
       stayInScope: true,
       extra: "",
+      dlpEnabled: false,
+      redactCreditCards: true,
+      redactEmails: true,
+      redactCredentials: true,
+      redactPhoneNumbers: true,
+      rateLimitRpm: 60,
+    },
+    swarm: {
+      enabled: false,
+      strategy: "router",
+      supervisorRole: "Triage & Delegate",
+      workers: [],
     },
   };
 }
+

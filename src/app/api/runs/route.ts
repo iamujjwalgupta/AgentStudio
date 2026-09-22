@@ -67,6 +67,7 @@ export async function POST(req: Request) {
     user: { id: u.id, name: u.name },
     dryRun: Boolean(dryRun),
     inputs: supplied,
+    waitForCompletion: false,
   });
-  return NextResponse.json({ runId });
+  return NextResponse.json({ runId }, { status: 202 });
 }

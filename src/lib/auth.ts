@@ -4,7 +4,11 @@ import { cookies } from "next/headers";
 import { one, q } from "./db";
 
 const COOKIE = "as_session";
-const secret = new TextEncoder().encode(process.env.AUTH_SECRET || "dev-secret-change-me");
+const rawAuthSecret = process.env.AUTH_SECRET;
+if (!rawAuthSecret && process.env.NODE_ENV === "production") {
+  throw new Error("CRITICAL SECURITY ERROR: AUTH_SECRET environment variable must be set in production.");
+}
+const secret = new TextEncoder().encode(rawAuthSecret || "dev-secret-change-me");
 
 export type Membership = {
   orgId: string;

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { one } from "@/lib/db";
+import { one, q } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { audit } from "@/lib/ai";
 import { toolById } from "@/lib/tools";
@@ -9,7 +9,7 @@ import type { AgentSpec } from "@/lib/types";
 export const runtime = "nodejs";
 
 /** Publishing is gated on the same checks the Review step shows the user. */
-function validate(spec: AgentSpec) {
+function validate(spec: AgentSpec, connKindById?: Map<string, string>) {
   const fails: string[] = [];
   if (!spec.name?.trim()) fails.push("The agent needs a name.");
   if (!spec.steps?.length || spec.steps.some((s) => !s.trim())) fails.push("Every instruction step must be filled in.");
@@ -18,7 +18,16 @@ function validate(spec: AgentSpec) {
     const def = toolById(t.id);
     if (!def) fails.push(`Unknown tool ${t.id}.`);
     else if (def.risk !== "low" && t.gate !== "approval") fails.push(`${def.label} is ${def.risk} risk and must require approval.`);
-    else if (def.needs && !spec.sources.length) fails.push(`${def.label} needs a ${def.needs} connection.`);
+    else if (def.needs) {
+      if (!spec.sources?.length) {
+        fails.push(`${def.label} needs a ${def.needs} connection.`);
+      } else if (connKindById) {
+        const hasMatchingKind = spec.sources.some((s) => connKindById.get(s.connectionId) === def.needs);
+        if (!hasMatchingKind) {
+          fails.push(`${def.label} requires an attached connection of type "${def.needs}".`);
+        }
+      }
+    }
   }
   if (spec.trigger?.type === "schedule" && !spec.trigger.schedule) fails.push("Set the schedule.");
   return fails;
@@ -39,8 +48,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const agent = await one<any>(`select * from agents where id = $1 and org_id = $2`, [id, u.orgId]);
   if (!agent) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  const connections = await q<any>(`select id, kind from connections where org_id = $1`, [u.orgId]);
+  const connKindById = new Map<string, string>();
+  for (const c of connections) connKindById.set(c.id, c.kind);
+
   const spec = agent.draft_spec as AgentSpec;
-  const fails = validate(spec);
+  const fails = validate(spec, connKindById);
   if (fails.length) return NextResponse.json({ error: fails.join(" ") }, { status: 400 });
 
   const next = (agent.published_ver || 0) + 1;

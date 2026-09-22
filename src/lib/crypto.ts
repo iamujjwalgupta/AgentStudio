@@ -1,8 +1,13 @@
 import crypto from "crypto";
 
+const rawSecret = process.env.AUTH_SECRET;
+if (!rawSecret && process.env.NODE_ENV === "production") {
+  throw new Error("CRITICAL SECURITY ERROR: AUTH_SECRET environment variable must be set in production.");
+}
+
 const key = crypto
   .createHash("sha256")
-  .update(process.env.AUTH_SECRET || "dev-secret-change-me")
+  .update(rawSecret || "dev-secret-change-me")
   .digest();
 
 /** Connection secrets are encrypted at rest and never returned to the browser. */
@@ -16,10 +21,17 @@ export function encrypt(plain: string): string {
 
 export function decrypt(blob: string): string {
   if (!blob) return "";
-  const [ivB, tagB, dataB] = blob.split(".");
-  const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(ivB, "base64"));
-  decipher.setAuthTag(Buffer.from(tagB, "base64"));
-  return Buffer.concat([decipher.update(Buffer.from(dataB, "base64")), decipher.final()]).toString("utf8");
+  try {
+    const parts = blob.split(".");
+    if (parts.length !== 3) return "";
+    const [ivB, tagB, dataB] = parts;
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(ivB, "base64"));
+    decipher.setAuthTag(Buffer.from(tagB, "base64"));
+    return Buffer.concat([decipher.update(Buffer.from(dataB, "base64")), decipher.final()]).toString("utf8");
+  } catch (err) {
+    console.error("Decryption failed:", err);
+    return "";
+  }
 }
 
 export function sha256(input: string) {

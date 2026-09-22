@@ -87,11 +87,22 @@ create table if not exists connections (
   created_at  timestamptz not null default now()
 );
 
--- Widen the kind constraint on databases created before 'anthropic' existed.
--- Drop-then-add in one statement pair, so re-running is safe.
+-- Drop restrictive kind check constraint to allow any enterprise connector or custom MCP server.
 alter table connections drop constraint if exists connections_kind_check;
-alter table connections add constraint connections_kind_check
-  check (kind in ('postgres','http','smtp','slack','files','anthropic'));
+
+-- Inbound Webhooks logged per connection for agent triggers & event streaming
+create table if not exists connection_webhooks (
+  id             uuid primary key default gen_random_uuid(),
+  connection_id  uuid not null references connections(id) on delete cascade,
+  event_type     text not null default 'custom.event',
+  payload        jsonb not null default '{}'::jsonb,
+  headers        jsonb not null default '{}'::jsonb,
+  status         text not null default 'processed',
+  created_at     timestamptz not null default now()
+);
+
+create index if not exists idx_connection_webhooks_conn
+  on connection_webhooks (connection_id, created_at desc);
 
 -- One model key per workspace: the runtime must never have to choose between two.
 create unique index if not exists uniq_conn_anthropic_per_org
@@ -318,3 +329,32 @@ create table if not exists skills (
 -- Two skills answering to the same name would make load_skill a coin toss.
 create unique index if not exists uniq_skill_name_per_org on skills (org_id, name);
 create index if not exists idx_skills_org on skills (org_id, updated_at desc);
+
+-- Embedded Web Applications: external portals, custom agent interfaces,
+-- dashboards, and operational tools embedded directly in Agent Studio canvas.
+create table if not exists apps (
+  id           text not null default gen_random_uuid()::text,
+  org_id       uuid not null references orgs(id) on delete cascade,
+  name         text not null,
+  description  text not null default '',
+  url          text not null,
+  category     text not null default 'general',
+  icon         text not null default 'globe',
+  display_mode text not null default 'canvas',
+  permissions  text not null default 'allow-scripts allow-same-origin allow-forms allow-popups allow-downloads',
+  position     integer not null default 0,
+  created_by   uuid references users(id),
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now(),
+  primary key (id, org_id)
+);
+
+create index if not exists idx_apps_org on apps (org_id, position asc, updated_at desc);
+
+create table if not exists workspace_hidden_apps (
+  org_id     uuid not null references orgs(id) on delete cascade,
+  app_id     text not null,
+  created_at timestamptz not null default now(),
+  primary key (org_id, app_id)
+);
+create index if not exists idx_workspace_hidden_apps_org on workspace_hidden_apps (org_id);

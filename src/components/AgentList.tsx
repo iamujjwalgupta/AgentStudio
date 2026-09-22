@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { formatWhen } from "@/lib/format";
+import ExportAgentModal from "@/components/ExportAgentModal";
+import Pagination from "@/components/Pagination";
 
 export type AgentRow = {
   id: string;
@@ -102,6 +104,16 @@ function RunIcon() {
   );
 }
 
+/** Thin-stroke download box, for exporting to cloud. */
+function ExportIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+      strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      <path d="M8 2.5v7.5M5 7.5l3 3 3-3M2.5 12.5h11" />
+    </svg>
+  );
+}
+
 const statusOf = (a: AgentRow) =>
   a.status === "retired"
     ? { cls: "grey", label: "Retired" }
@@ -132,8 +144,16 @@ export default function AgentList({
   const [archetype, setArchetype] = useState("all");
   const [status, setStatus] = useState("active");
   const [sort, setSort] = useState("updated");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(8);
+
+  // Reset to page 1 whenever search, filter, or sorting changes
+  useEffect(() => {
+    setPage(1);
+  }, [term, archetype, status, sort]);
 
   const [shareOf, setShareOf] = useState<AgentRow | null>(null);
+  const [exportOf, setExportOf] = useState<AgentRow | null>(null);
   const [email, setEmail] = useState("");
   const [note, setNote] = useState("");
   const [sent, setSent] = useState("");
@@ -293,6 +313,10 @@ export default function AgentList({
       return 0; // the server already returns most-recently-updated first
     });
 
+  const totalPages = Math.max(1, Math.ceil(shown.length / pageSize));
+  const validPage = Math.min(Math.max(1, page), totalPages);
+  const paginatedShown = shown.slice((validPage - 1) * pageSize, validPage * pageSize);
+
   const filtered = needle !== "" || archetype !== "all" || status !== "active";
 
   const cols = "2.4fr .9fr .9fr .9fr .9fr";
@@ -337,6 +361,11 @@ export default function AgentList({
         <span className="count">
           {shown.length} {shown.length === 1 ? "agent" : "agents"}
           {filtered && <span className="dim"> of {agents.length}</span>}
+          {totalPages > 1 && (
+            <span className="dim" style={{ marginLeft: 6 }}>
+              · Page {validPage} of {totalPages}
+            </span>
+          )}
           {filtered && (
             <button
               className="link-btn"
@@ -379,7 +408,7 @@ export default function AgentList({
             <div>Runs</div>
             <div />
           </div>
-          {shown.map((a) => {
+          {paginatedShown.map((a) => {
             const s = statusOf(a);
             return (
               <div key={a.id} className={`tr agent-row ${a.status === "retired" ? "is-retired" : ""}`} style={{ gridTemplateColumns: rowCols }}>
@@ -418,6 +447,18 @@ export default function AgentList({
                   </button>
                   <button
                     className="icon-act"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setExportOf(a);
+                    }}
+                    aria-label={`Export ${a.name} to Cloud`}
+                    title="Export to Cloud (GCP, AWS, Azure)"
+                  >
+                    <ExportIcon />
+                  </button>
+                  <button
+                    className="icon-act"
                     onClick={(e) => askShare(e, a)}
                     aria-label={`Share ${a.name}`}
                     title="Share"
@@ -441,10 +482,10 @@ export default function AgentList({
         </div>
       ) : (
         <div className="cards">
-          {shown.map((a) => {
+          {paginatedShown.map((a) => {
             const s = statusOf(a);
             return (
-              <div key={a.id} className={`card-wrap ${a.status === "retired" ? "is-retired" : ""}`}>
+              <div key={a.id} className={`card-wrap agent-card-wrap ${a.status === "retired" ? "is-retired" : ""}`}>
                 <Link href={`/agents/${a.id}`} className="card">
                   <div className="card-head">
                     <span className="tag">{a.archetype}</span>
@@ -455,7 +496,14 @@ export default function AgentList({
                   <div className="card-foot">
                     {/* Domain only: the action buttons claim the right of this line, and
                         the run count already has a column in the list view. */}
-                    <span className="card-meta" title={a.schedule_caveat || undefined}>
+                    <span
+                      className="card-meta"
+                      title={
+                        a.schedule_caveat ||
+                        (nextRunLabel(a, timezone) ? `Next run: ${nextRunLabel(a, timezone)}` : a.draft_spec?.domain) ||
+                        undefined
+                      }
+                    >
                       {nextRunLabel(a, timezone) ? `next ${nextRunLabel(a, timezone)}` : a.draft_spec?.domain || "No domain"}
                     </span>
                   </div>
@@ -481,6 +529,18 @@ export default function AgentList({
                   </button>
                   <button
                     className="icon-act"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setExportOf(a);
+                    }}
+                    aria-label={`Export ${a.name} to Cloud`}
+                    title="Export to Cloud (GCP, AWS, Azure)"
+                  >
+                    <ExportIcon />
+                  </button>
+                  <button
+                    className="icon-act"
                     onClick={(e) => askShare(e, a)}
                     aria-label={`Share ${a.name}`}
                     title="Share"
@@ -502,6 +562,19 @@ export default function AgentList({
             );
           })}
         </div>
+      )}
+
+      {shown.length > 0 && (
+        <Pagination
+          currentPage={validPage}
+          totalItems={shown.length}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          pageSizeOptions={[8, 16, 24, 48]}
+          itemLabel="agent"
+          itemLabelPlural="agents"
+        />
       )}
 
       {shareOf && (
@@ -617,6 +690,14 @@ export default function AgentList({
             </div>
           </div>
         </div>
+      )}
+      {exportOf && (
+        <ExportAgentModal
+          agentId={exportOf.id}
+          agentName={exportOf.name}
+          isOpen={Boolean(exportOf)}
+          onClose={() => setExportOf(null)}
+        />
       )}
     </>
   );
