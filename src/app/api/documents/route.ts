@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { STORAGE_ROOT } from "@/lib/storage";
 import fs from "fs/promises";
 import path from "path";
 import { q, one } from "@/lib/db";
@@ -22,7 +23,7 @@ export async function POST(req: Request) {
   const file = form.get("file") as File | null;
   if (!file) return NextResponse.json({ error: "Choose a file to upload." }, { status: 400 });
 
-  const dir = path.join(process.env.STORAGE_DIR || path.join(process.cwd(), "storage"), "uploads", u.orgId);
+  const dir = path.join(STORAGE_ROOT, "uploads", u.orgId);
   await fs.mkdir(dir, { recursive: true });
   const safe = path.basename(file.name).replace(/[^\w.\- ]+/g, "_");
   const target = path.join(dir, `${Date.now()}-${safe}`);

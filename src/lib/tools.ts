@@ -7,6 +7,7 @@ import { q, one } from "./db";
 import { skillName, type SkillRow } from "./skills";
 import type { Risk } from "./types";
 import { assertSafeUrl } from "./ssrf";
+import { storedPath } from "./storage";
 import { anthropicUsage, assertWithinLimits, recordUsage } from "./metering";
 
 export type ToolContext = {
@@ -16,9 +17,13 @@ export type ToolContext = {
   /** Skills granted to this agent, resolved by the orchestrator. */
   skills: SkillRow[];
   storageDir: string;
-  /** Model credential for this workspace, resolved by the orchestrator. */
+  /**
+   * The key and model for actions that call a model of their own (web search),
+   * on the agent's own engine: an agent on Gemini searches with the Gemini key.
+   */
   apiKey: string;
   model: string;
+  engine?: "anthropic" | "gemini";
   runId?: string;
   agentId?: string;
 };
@@ -109,6 +114,49 @@ function withoutLeadingComments(sql: string): string {
   }
 }
 
+/* ── read-only database sessions ──────────────────────────── */
+
+export type ReadOnlySession = {
+  connectionName: string;
+  documentName?: string;
+  /** One SELECT (or WITH … SELECT), capped at `limit` rows. */
+  select: (sql: string, limit: number) => Promise<{ fields: string[]; rows: any[] }>;
+  close: () => Promise<void>;
+};
+
+/**
+ * A connection to a granted Postgres database for read-only queries, with an
+ * uploaded CSV attached as the temporary table `upload` when one is named.
+ * Shared by actions that read figures for the user (the result dashboard), so
+ * they follow the same rules as "Query a database".
+ */
+export async function readOnlySession(ctx: ToolContext, connection?: string, document?: string): Promise<ReadOnlySession> {
+  const c = connOf(ctx, "postgres", connection);
+  const upload = document ? await uploadedTable(ctx.orgId, document) : null;
+  const client = new PgClient({ connectionString: secretOf(c), connectionTimeoutMillis: 10_000 });
+  await client.connect();
+  try {
+    if (upload) await loadUpload(client, upload);
+    await client.query("set default_transaction_read_only = on");
+  } catch (e) {
+    await client.end().catch(() => {});
+    throw e;
+  }
+  return {
+    connectionName: c.name,
+    ...(upload ? { documentName: upload.name } : {}),
+    async select(sql: string, limit: number) {
+      const trimmed = withoutLeadingComments(String(sql || "")).replace(/;+\s*$/, "");
+      if (!/^(select|with)\b/i.test(trimmed) || /;/.test(trimmed)) {
+        throw new Error("Only a single read-only SELECT (or WITH … SELECT) statement is permitted.");
+      }
+      const r = await client.query(`select * from (${trimmed}) as q limit ${Math.max(1, Math.floor(limit))}`);
+      return { fields: r.fields.map((f) => f.name), rows: r.rows };
+    },
+    close: () => client.end(),
+  };
+}
+
 /* ── uploaded tables ──────────────────────────────────────── */
 
 type UploadedTable = { name: string; cols: string[]; sqlCols: string[]; rows: Record<string, string>[] };
@@ -122,9 +170,20 @@ async function uploadedTable(orgId: string, name: string): Promise<UploadedTable
   const docs = await q<any>(`select id, name, path from documents where org_id = $1 order by created_at desc limit 100`, [orgId]);
   const doc = docs.find((d) => d.id === name || d.name === name || d.name.toLowerCase() === String(name).toLowerCase());
   if (!doc) throw new Error(`No uploaded document named "${name}". Available: ${docs.map((d) => d.name).join(", ") || "none"}`);
-  if (![".csv", ".tsv"].includes(path.extname(doc.name).toLowerCase())) throw new Error(`"${doc.name}" is not a CSV file.`);
-  const parsed = Papa.parse<Record<string, string>>((await fs.readFile(doc.path, "utf8")).trim(), { header: true, skipEmptyLines: true });
-  const cols = (parsed.meta.fields || []).filter(Boolean);
+  const ext = path.extname(doc.name).toLowerCase();
+  if (![".csv", ".tsv", ".xlsx"].includes(ext)) throw new Error(`"${doc.name}" is not a CSV or Excel (.xlsx) file.`);
+  let cols: string[];
+  let data: Record<string, string>[];
+  if (ext === ".xlsx") {
+    const { readTableFile } = await import("./file-sql");
+    const t = await readTableFile(storedPath(doc.path), doc.name, "upload");
+    cols = t.columns.map((c) => c.header);
+    data = t.rows.map((r) => Object.fromEntries(cols.map((h, j) => [h, r[j] ?? ""])));
+  } else {
+    const parsed = Papa.parse<Record<string, string>>((await fs.readFile(storedPath(doc.path), "utf8")).trim(), { header: true, skipEmptyLines: true });
+    cols = (parsed.meta.fields || []).filter(Boolean);
+    data = parsed.data;
+  }
   // Column names a query can use as they are: lower case, letters, digits and underscores.
   const seen = new Set<string>(["row_no"]);
   const sqlCols = cols.map((c, i) => {
@@ -135,7 +194,7 @@ async function uploadedTable(orgId: string, name: string): Promise<UploadedTable
     seen.add(u);
     return u;
   });
-  return { name: doc.name, cols, sqlCols, rows: parsed.data };
+  return { name: doc.name, cols, sqlCols, rows: data };
 }
 
 async function loadUpload(client: PgClient, t: UploadedTable) {
@@ -172,6 +231,73 @@ async function parseDocument(filePath: string, name: string): Promise<string> {
   return fs.readFile(filePath, "utf8");
 }
 
+/* ── web search on Gemini ──────────────────────────────────── */
+
+/**
+ * Web search for an agent that runs on Gemini: Gemini with Google Search
+ * grounding, on the workspace's Gemini key. Returns the same shape as the
+ * Claude search, with the pages it drew on.
+ */
+async function geminiSearch(query: string, ctx: ToolContext) {
+  if (!ctx.apiKey) throw new Error("This agent runs on Gemini, and the workspace has no Gemini key. Add one under Connections.");
+  await assertWithinLimits(ctx.orgId, "gemini", ctx.agentId);
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(ctx.model)}:generateContent`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-goog-api-key": ctx.apiKey },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: `Search the web and answer factually, citing your sources. Question: ${query}` }] }],
+      tools: [{ google_search: {} }],
+      generationConfig: { temperature: 0.2, maxOutputTokens: 4096 },
+    }),
+    signal: AbortSignal.timeout(90_000),
+  }).catch((e: any) => {
+    throw new Error(`Could not reach Gemini for the web search: ${e?.message || e}`);
+  });
+  const data: any = await res.json().catch(() => ({}));
+  const u = data.usageMetadata || {};
+  await recordUsage(
+    { orgId: ctx.orgId, feature: "web_search", agentId: ctx.agentId, runId: ctx.runId, userId: ctx.userId },
+    "gemini",
+    ctx.model,
+    { input: u.promptTokenCount ?? 0, output: (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0) },
+  );
+  if (!res.ok) {
+    const msg = String(data?.error?.message || `HTTP ${res.status}`);
+    throw new Error(
+      res.status === 429
+        ? "The Gemini key has hit its rate limit or quota, so the web search could not run. Wait a minute and try again."
+        : res.status === 400 || res.status === 403
+          ? `Gemini refused the web search (${msg.slice(0, 200)}). Check the Gemini key under Connections.`
+          : `The web search failed (${res.status}): ${msg.slice(0, 200)}`,
+    );
+  }
+  const cand = data.candidates?.[0];
+  const text = (cand?.content?.parts || []).map((p: any) => p.text || "").join("").trim();
+  const meta = cand?.groundingMetadata || {};
+  // Google's links are redirects through its own server; follow each once to the page itself.
+  const chunks: { uri: string; title: string }[] = (meta.groundingChunks || [])
+    .map((c: any) => c.web)
+    .filter((w: any) => w?.uri)
+    .slice(0, 12);
+  const sources = await Promise.all(
+    chunks.map(async (w) => {
+      try {
+        const r = await fetch(w.uri, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(5000) });
+        const to = r.headers.get("location");
+        return { title: w.title, url: to && /^https?:\/\//.test(to) ? to : w.uri };
+      } catch {
+        return { title: w.title, url: w.uri };
+      }
+    }),
+  );
+  if (!text) throw new Error("The web search returned no answer. Try a more specific query.");
+  return {
+    answer: clip(text, 8000),
+    sources: [...new Map(sources.map((x) => [x.url, x])).values()],
+    ...(Array.isArray(meta.webSearchQueries) && meta.webSearchQueries.length ? { searched_for: meta.webSearchQueries } : {}),
+  };
+}
+
 /* ── the registry ─────────────────────────────────────────── */
 
 export const TOOLS: ToolDef[] = [
@@ -186,6 +312,7 @@ export const TOOLS: ToolDef[] = [
       required: ["query"],
     },
     async run({ query }, ctx) {
+      if (ctx.engine === "gemini") return geminiSearch(String(query || ""), ctx);
       // A model call of its own, so it is metered and limited like the run that makes it.
       await assertWithinLimits(ctx.orgId, "anthropic", ctx.agentId);
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -348,14 +475,14 @@ export const TOOLS: ToolDef[] = [
     id: "read_document",
     label: "Read an uploaded document",
     description:
-      "Read a file the user uploaded — CSV, PDF, DOCX or plain text. Call with no name to list what is available. " +
+      "Read a file the user uploaded — CSV, Excel (.xlsx), PDF, DOCX or plain text. Call with no name to list what is available. " +
       "Long files come back a page at a time; the result says which rows (or characters) it holds and where to read on from.",
     risk: "low",
     schema: {
       type: "object",
       properties: {
         name: { type: "string", description: "File name or id. Omit to list available documents." },
-        from_row: { type: "number", description: "CSV only: the first data row to return, counting from 1. Default 1." },
+        from_row: { type: "number", description: "CSV and Excel: the first data row to return, counting from 1. Default 1." },
         from_char: { type: "number", description: "Other files: the character to start from, counting from 0. Default 0." },
       },
     },
@@ -372,10 +499,26 @@ export const TOOLS: ToolDef[] = [
       // The agent is told exactly which rows it has, so it never mistakes part
       // of a file for all of it.
       const ext = path.extname(doc.name).toLowerCase();
-      if (ext === ".csv" || ext === ".tsv") {
-        const parsed = Papa.parse((await fs.readFile(doc.path, "utf8")).trim(), { header: true, skipEmptyLines: true });
-        const cols = parsed.meta.fields || [];
-        const rows = parsed.data as any[];
+      if (ext === ".csv" || ext === ".tsv" || ext === ".xlsx") {
+        let cols: string[];
+        let rows: any[];
+        let around: Record<string, any> = {};
+        if (ext === ".xlsx") {
+          // The table on the main sheet, found under any title lines, as the query engine sees it.
+          const { readTableFile } = await import("./file-sql");
+          const t = await readTableFile(storedPath(doc.path), doc.name, "t");
+          cols = t.columns.map((c) => c.header);
+          rows = t.rows.map((r) => Object.fromEntries(cols.map((h, j) => [h, r[j] ?? ""])));
+          around = {
+            ...(t.sheet ? { sheet: t.sheet } : {}),
+            ...(t.notesAbove?.length ? { lines_above_the_table: t.notesAbove } : {}),
+            ...(t.notesBelow?.length ? { lines_below_the_table: t.notesBelow } : {}),
+          };
+        } else {
+          const parsed = Papa.parse((await fs.readFile(storedPath(doc.path), "utf8")).trim(), { header: true, skipEmptyLines: true });
+          cols = parsed.meta.fields || [];
+          rows = parsed.data as any[];
+        }
         const start = Math.min(Math.max(Math.floor(Number(from_row) || 1), 1), Math.max(rows.length, 1)) - 1;
         const cell = (v: any) => {
           const s = v == null ? "" : String(v);
@@ -392,6 +535,7 @@ export const TOOLS: ToolDef[] = [
         }
         return {
           name: doc.name,
+          ...around,
           columns: cols,
           totalRows: rows.length,
           rows: rows.length ? `${start + 1}–${i} of ${rows.length}` : "none",
@@ -400,7 +544,7 @@ export const TOOLS: ToolDef[] = [
         };
       }
 
-      const text = await parseDocument(doc.path, doc.name);
+      const text = await parseDocument(storedPath(doc.path), doc.name);
       const at = Math.min(Math.max(Math.floor(Number(from_char) || 0), 0), text.length);
       const end = Math.min(at + 20000, text.length);
       return {
@@ -410,6 +554,72 @@ export const TOOLS: ToolDef[] = [
         ...(end < text.length ? { more: `Characters ${end}–${text.length} are not shown. Call again with from_char ${end}.` } : { complete: true }),
         content: text.slice(at, end),
       };
+    },
+  },
+
+  {
+    id: "query_files",
+    label: "Query the uploaded files",
+    description:
+      "Run SQL over the CSV files given to this run — no database needed. Each file is a table named after its input " +
+      "(for example bank_statement, cash_book), with row_no (its line in the file, from 1) and the file's columns, already typed: " +
+      "amounts as exact decimals (commas, ₹ and brackets handled), dates as dates (day/month/year read correctly), reference " +
+      "numbers as text. Call with list_tables true first to see the tables, columns and sample rows. The SQL is DuckDB, close to " +
+      "PostgreSQL: ::casts, ILIKE, regexp_replace(x, '[^0-9]', '', 'g'), abs(), date_diff('day', a, b), string_agg, window " +
+      "functions, FULL OUTER JOIN. Match and total in SQL rather than reading rows and adding them up yourself. " +
+      "Build the work in steps: give save_as to keep a SELECT as a named view (e.g. matches, unmatched, summary) that later " +
+      "queries and present_result can select from by name, instead of repeating long queries.",
+    risk: "low",
+    implicit: true,
+    schema: {
+      type: "object",
+      properties: {
+        list_tables: { type: "boolean", description: "Return the tables, their typed columns and sample rows instead of running a query" },
+        sql: { type: "string", description: "A single SELECT (or WITH … SELECT)" },
+        save_as: {
+          type: "string",
+          description: "Save this SELECT as a view with this name (lower_case_with_underscores) for the rest of the run; returns its row count, columns and first rows. Saving again under the same name replaces it.",
+        },
+        limit: { type: "number", description: "Max rows to return, default 200, at most 1000" },
+        files: {
+          type: "array",
+          items: { type: "string" },
+          description: "Other uploaded CSV files to include, by file name; each becomes a table named after the file",
+        },
+      },
+    },
+    async run({ list_tables, sql, save_as, limit, files }, ctx) {
+      const { runFiles, openFileSession, describeTables, savedViews, saveView } = await import("./file-sql");
+      const tables = await runFiles(ctx, Array.isArray(files) ? files : []);
+      if (!tables.length) throw new Error("This run was given no CSV files. Ask the user to attach one, or name an uploaded file in files.");
+      const views = await savedViews(ctx);
+      if (list_tables || !sql) {
+        if (!views.length) return { tables: describeTables(tables) };
+        const s = await openFileSession(tables, views);
+        try {
+          const described = [];
+          for (const v of views) {
+            const r = await s.select(`select * from "${v.name}"`, 1).catch(() => null);
+            described.push({ view: v.name, columns: r ? r.fields : "could not be recreated" });
+          }
+          return { tables: describeTables(tables), saved_views: described };
+        } finally {
+          s.close();
+        }
+      }
+      if (save_as) return saveView(ctx, tables, save_as, sql);
+      const session = await openFileSession(tables, views);
+      try {
+        const cap = Math.min(Math.max(Math.floor(Number(limit) || 200), 1), 1000);
+        const r = await session.select(sql, cap + 1);
+        return {
+          rowCount: Math.min(r.rows.length, cap),
+          ...(r.rows.length > cap ? { more: `More than ${cap} rows; aggregate, filter, or raise limit (up to 1000).` } : {}),
+          rows: r.rows.slice(0, Math.min(cap, 500)),
+        };
+      } finally {
+        session.close();
+      }
     },
   },
 
@@ -1135,6 +1345,209 @@ export const TOOLS: ToolDef[] = [
         );
       }
       return { skill: found.name, description: found.description, instructions: found.instructions };
+    },
+  },
+
+  {
+    id: "present_result",
+    label: "Present the result",
+    description:
+      "Present your result to the user as a dashboard (with Excel, PDF and PowerPoint downloads): headline figures, charts, " +
+      "tables, findings and actions. Give any figure, chart or table that comes from the database or an uploaded file as a " +
+      "`sql` SELECT — the app runs it and shows the exact result — rather than typing the numbers in. Over uploaded files, select from the " +
+      "views you saved with query_files, so each query stays short. Call it once, when the work is done.",
+    risk: "low",
+    implicit: true,
+    schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short title, e.g. 'Payment run check — 7 Oct 2026'" },
+        subtitle: { type: "string", description: "One line under the title: scope, period, source" },
+        summary: { type: "string", description: "Two to four sentences: what was found and what matters most" },
+        currency: { type: "string", description: "ISO currency code for money figures, default INR" },
+        source: {
+          type: "string",
+          enum: ["database", "files"],
+          description: "Where the sql queries run: the connected database, or the run's uploaded files (as in query_files). Default: the database when one is connected, otherwise the files",
+        },
+        connection: { type: "string", description: "Connection for the sql queries, optional if only one is granted" },
+        document: { type: "string", description: "Database queries only: an uploaded CSV to attach to every sql query as the table `upload`" },
+        kpis: {
+          type: "array",
+          description: "Two to six headline figures",
+          items: {
+            type: "object",
+            properties: {
+              label: { type: "string" },
+              sql: { type: "string", description: "SELECT returning one value (first column of the first row)" },
+              value: { type: "string", description: "Only when there is no sql: the figure, numbers as plain digits" },
+              format: { type: "string", enum: ["currency", "number", "integer", "percent", "text"] },
+              tone: { type: "string", enum: ["good", "bad", "warn", "neutral"], description: "bad/warn for problems, good for clean results" },
+              note: { type: "string", description: "A few words of context" },
+            },
+            required: ["label"],
+          },
+        },
+        charts: {
+          type: "array",
+          description: "Up to four charts",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              kind: { type: "string", enum: ["bar", "line", "donut"], description: "bar to compare, line over time, donut for parts of a whole" },
+              sql: { type: "string", description: "SELECT whose first column is the category label and each further column one series of numbers" },
+              categories: { type: "array", items: { type: "string" }, description: "Only when there is no sql" },
+              series: {
+                type: "array",
+                description: "Only when there is no sql",
+                items: { type: "object", properties: { name: { type: "string" }, values: { type: "array", items: { type: "number" } } } },
+              },
+              format: { type: "string", enum: ["currency", "number", "integer", "percent"] },
+              note: { type: "string" },
+            },
+            required: ["title", "kind"],
+          },
+        },
+        tables: {
+          type: "array",
+          description: "The detail, one table per list (e.g. Remove from this run, Held, For review)",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              sql: { type: "string", description: "SELECT returning the table's rows; column names become headings" },
+              columns: {
+                type: "array",
+                description: "Optional headings and formats, by result column name",
+                items: {
+                  type: "object",
+                  properties: {
+                    key: { type: "string" },
+                    label: { type: "string" },
+                    format: { type: "string", enum: ["currency", "number", "integer", "percent", "date", "text"] },
+                  },
+                  required: ["key"],
+                },
+              },
+              rows: { type: "array", items: { type: "object" }, description: "Only when there is no sql" },
+              note: { type: "string" },
+            },
+            required: ["title"],
+          },
+        },
+        findings: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              tone: { type: "string", enum: ["good", "bad", "warn", "neutral"] },
+              title: { type: "string" },
+              detail: { type: "string" },
+            },
+            required: ["title"],
+          },
+        },
+        actions: {
+          type: "array",
+          description: "What someone should do next",
+          items: { type: "object", properties: { text: { type: "string" }, owner: { type: "string" } }, required: ["text"] },
+        },
+      },
+      required: ["title"],
+    },
+    async run(input, ctx) {
+      const { normalizeDeliverable, humanize, guessFormat, CHART_CATEGORY_CAP, TABLE_ROW_CAP, formatValue } = await import("./deliverable");
+      const kpis = Array.isArray(input.kpis) ? input.kpis : [];
+      const charts = Array.isArray(input.charts) ? input.charts : [];
+      const tables = Array.isArray(input.tables) ? input.tables : [];
+      const needsSql = [...kpis, ...charts, ...tables].some((x: any) => x && typeof x.sql === "string" && x.sql.trim());
+
+      // Figures with a query are read here, so what the user sees is what the data says.
+      const problems: string[] = [];
+      let session: ReadOnlySession | null = null;
+      if (needsSql) {
+        const hasDb = Object.values(ctx.connections).some((c) => c.kind === "postgres");
+        if (input.source === "files" || (!hasDb && input.source !== "database")) {
+          const { runFiles, openFileSession, savedViews } = await import("./file-sql");
+          const fs_ = await openFileSession(await runFiles(ctx), await savedViews(ctx));
+          session = { connectionName: "", documentName: fs_.tables.map((t) => t.file).join(", "), select: fs_.select, close: async () => fs_.close() };
+        } else session = await readOnlySession(ctx, input.connection, input.document);
+      }
+      try {
+        const run = async (label: string, sql: string, limit: number) => {
+          try {
+            return await session!.select(sql, limit);
+          } catch (e: any) {
+            problems.push(`${label}: ${e?.message || e}`);
+            return null;
+          }
+        };
+        for (const k of kpis) {
+          if (!k?.sql) {
+            if (typeof k?.value === "string" && /^-?\d+(\.\d+)?$/.test(k.value.trim())) k.value = Number(k.value);
+            continue;
+          }
+          const r = await run(`Figure "${k.label}"`, k.sql, 1);
+          if (r) {
+            const v = r.rows[0]?.[r.fields[0]];
+            k.value = v === null || v === undefined ? null : /^-?\d+(\.\d+)?$/.test(String(v)) ? Number(v) : String(v);
+          }
+        }
+        for (const c of charts) {
+          if (!c?.sql) continue;
+          const r = await run(`Chart "${c.title}"`, c.sql, CHART_CATEGORY_CAP);
+          if (r && r.fields.length >= 2) {
+            c.categories = r.rows.map((row) => String(row[r.fields[0]] ?? ""));
+            c.series = r.fields.slice(1).map((f) => ({ name: humanize(f), values: r.rows.map((row) => Number(row[f]) || 0) }));
+            // Money is shown as money: read from the first number column's name, as tables are.
+            if (!c.format || c.format === "number") {
+              const g = guessFormat(r.fields[1], r.rows.map((row) => row[r.fields[1]]));
+              if (g === "currency" || g === "percent") c.format = g;
+            }
+          } else if (r) problems.push(`Chart "${c.title}": the query needs a label column and at least one number column.`);
+        }
+        for (const t of tables) {
+          if (!t?.sql) continue;
+          const r = await run(`Table "${t.title}"`, t.sql, TABLE_ROW_CAP + 1);
+          if (r) {
+            if (r.rows.length > TABLE_ROW_CAP) t.truncated = r.rows.length;
+            t.rows = r.rows.slice(0, TABLE_ROW_CAP);
+            if (!Array.isArray(t.columns) || !t.columns.length) t.columns = r.fields.map((key) => ({ key }));
+          }
+        }
+      } finally {
+        await session?.close().catch(() => {});
+      }
+      if (problems.length) {
+        throw new Error(`Some queries failed, so nothing was shown yet. Fix them and call present_result again:\n- ${problems.join("\n- ")}`);
+      }
+
+      const d = normalizeDeliverable({
+        ...input,
+        kpis,
+        charts,
+        tables,
+        sources: [session?.connectionName, ...(session?.documentName ? session.documentName.split(", ") : [])].filter(Boolean),
+      });
+      const row = await one<any>(
+        `insert into deliverables (org_id, run_id, agent_id, spec) values ($1, $2, $3, $4) returning id`,
+        [ctx.orgId, ctx.runId ?? null, ctx.agentId ?? null, JSON.stringify(d)],
+      );
+      return {
+        deliverable: row.id,
+        shown: {
+          figures: d.kpis.map((k) => `${k.label}: ${formatValue(k.value, k.format, d.currency)}`),
+          charts: d.charts.map((c) => `${c.title} (${c.categories.length} points)`),
+          tables: d.tables.map((t) => `${t.title}: ${t.rows.length} rows`),
+        },
+        note:
+          // A full set of figures with nothing drawn reads as a report, not a
+          // dashboard. It is shown as it is, and the agent is asked once more.
+          d.charts.length === 0 && d.kpis.length >= 3 && d.tables.length > 0
+            ? "Shown, but with no charts. Call present_result again with the same content plus 1–3 charts (each with a sql query) that make the pattern visible — for example value by reason or by vendor as a bar, or the split of the total as a donut. The newer one replaces this. Then write your final message."
+            : "The user now sees this as a dashboard with Excel, PDF and PowerPoint downloads. Use these exact figures in your final message, and keep it short: the dashboard carries the detail.",
+      };
     },
   },
 ];

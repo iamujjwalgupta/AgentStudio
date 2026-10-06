@@ -1,0 +1,184 @@
+{
+  "period": "2026-04-01 to 2026-09-30",
+  "vendor": "Shakti Packaging Industries",
+  "opening_balance": 412640,
+  "invoices_missing_in_our_books": [
+    {
+      "invoice_no": "SPI/26-27/0109",
+      "date": "2026-06-01",
+      "amount": 297796.6
+    },
+    {
+      "invoice_no": "SPI/26-27/0123",
+      "date": "2026-09-28",
+      "amount": 126472.4
+    },
+    {
+      "invoice_no": "SPI/26-27/0124",
+      "date": "2026-09-29",
+      "amount": 266243.4
+    }
+  ],
+  "invoices_missing_in_vendor_statement": [
+    {
+      "invoice_no": "SPI/26-27/0098",
+      "date": "2026-07-16",
+      "amount": 56640
+    }
+  ],
+  "amount_differences": [
+    {
+      "invoice_no": "SPI/26-27/0107",
+      "vendor_amount": 123900,
+      "our_amount": 118000,
+      "difference": 5900
+    },
+    {
+      "invoice_no": "SPI/26-27/0117",
+      "vendor_amount": 207608,
+      "our_amount": 207680,
+      "difference": -72
+    }
+  ],
+  "payments_not_in_vendor_statement": [
+    {
+      "date": "2026-09-30",
+      "utr": "HDFCN52609300004730",
+      "amount": 352780
+    }
+  ],
+  "vendor_credit_notes_not_in_our_books": [
+    {
+      "credit_note": "CN/26-27/0007",
+      "date": "2026-06-24",
+      "amount": 14160,
+      "reason": "Rate difference on SPI/26-27/0106"
+    },
+    {
+      "credit_note": "CN/26-27/0009",
+      "date": "2026-09-18",
+      "amount": 8850,
+      "reason": "Short supply against SPI/26-27/0118"
+    }
+  ],
+  "our_debit_notes_not_in_vendor_statement": [
+    {
+      "debit_note": "DN/26-27/0014",
+      "date": "2026-08-06",
+      "amount": 22420
+    }
+  ],
+  "tds_deducted_not_in_vendor_statement": [
+    {
+      "invoice_no": "SPI/26-27/0101",
+      "amount": 155.32
+    },
+    {
+      "invoice_no": "SPI/26-27/0102",
+      "amount": 55.3
+    },
+    {
+      "invoice_no": "SPI/26-27/0103",
+      "amount": 323.02
+    },
+    {
+      "invoice_no": "SPI/26-27/0104",
+      "amount": 113.52
+    },
+    {
+      "invoice_no": "SPI/26-27/0105",
+      "amount": 44.04
+    },
+    {
+      "invoice_no": "SPI/26-27/0106",
+      "amount": 68.41
+    },
+    {
+      "invoice_no": "SPI/26-27/0107",
+      "amount": 100
+    },
+    {
+      "invoice_no": "SPI/26-27/0108",
+      "amount": 127.93
+    },
+    {
+      "invoice_no": "SPI/26-27/0110",
+      "amount": 182.79
+    },
+    {
+      "invoice_no": "SPI/26-27/0111",
+      "amount": 286.84
+    },
+    {
+      "invoice_no": "SPI/26-27/0112",
+      "amount": 248.91
+    },
+    {
+      "invoice_no": "SPI/26-27/0113",
+      "amount": 292.14
+    },
+    {
+      "invoice_no": "SPI/26-27/0114",
+      "amount": 294.16
+    },
+    {
+      "invoice_no": "SPI/26-27/0115",
+      "amount": 139.01
+    },
+    {
+      "invoice_no": "SPI/26-27/0116",
+      "amount": 161.41
+    },
+    {
+      "invoice_no": "SPI/26-27/0117",
+      "amount": 176
+    },
+    {
+      "invoice_no": "SPI/26-27/0118",
+      "amount": 214.12
+    },
+    {
+      "invoice_no": "SPI/26-27/0119",
+      "amount": 234.23
+    },
+    {
+      "invoice_no": "SPI/26-27/0120",
+      "amount": 75.64
+    },
+    {
+      "invoice_no": "SPI/26-27/0121",
+      "amount": 99.74
+    },
+    {
+      "invoice_no": "SPI/26-27/0122",
+      "amount": 88.45
+    },
+    {
+      "invoice_no": "SPI/26-27/0098",
+      "amount": 48
+    }
+  ],
+  "closing_balance_per_vendor": 2144796.8,
+  "closing_balance_per_our_books": 1149377.42,
+  "difference": 995419.38,
+  "totals": {
+    "invoices_missing_in_our_books": 690512.4,
+    "invoices_missing_in_vendor_statement": 56640,
+    "amount_differences": 5828,
+    "payments_not_in_vendor_statement": 352780,
+    "vendor_credit_notes_not_in_our_books": 23010,
+    "our_debit_notes_not_in_vendor_statement": 22420,
+    "tds_deducted_not_in_vendor_statement": 3528.98
+  },
+  "short_references_to_match": [
+    "SPI/26-27/0104",
+    "SPI/26-27/0111",
+    "SPI/26-27/0115",
+    "SPI/26-27/0119"
+  ],
+  "unexplained_difference": 0,
+  "rows": {
+    "vendor_statement": 34,
+    "our_ledger": 54
+  }
+}

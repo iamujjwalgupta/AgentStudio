@@ -8,7 +8,7 @@ import Pagination from "@/components/Pagination";
 import type { AgentListFacets, AgentListPage, AgentListSummary, AgentRow } from "@/lib/agent-list";
 import { canDeleteAgent, deleteDeniedReason, type DeleteActor } from "@/lib/agent-perms";
 import {
-  ArchiveIcon, DomainTags, EyeIcon, ExportIcon, GridIcon, LayersIcon, ListIcon, MoreIcon, RestoreIcon, RunIcon, ShareIcon, TrashIcon,
+  ArchiveIcon, ChatIcon, DomainTags, EyeIcon, ExportIcon, GridIcon, LayersIcon, ListIcon, MoreIcon, RestoreIcon, RunIcon, ShareIcon, TrashIcon,
   processColour,
 } from "@/components/agent-ui";
 
@@ -424,8 +424,8 @@ export default function AgentList({
     return (
       <div className="al-actions">
         {a.status !== "retired" && (
-          <Link href={`/agents/${a.id}/run`} className="btn sm al-run" title={`Run ${a.name}`}>
-            <RunIcon /> Run
+          <Link href={`/agents/${a.id}/chat`} className="btn sm al-run" title={`Talk to ${a.name}`}>
+            <ChatIcon /> Chat
           </Link>
         )}
         <button className="icon-act" onClick={() => setPeekId(a.id)} aria-label={`Quick look at ${a.name}`} title="Quick look">
@@ -942,9 +942,14 @@ function QuickLook({ id, timezone, onClose }: { id: string; timezone: string; on
             <div className="al-peek-foot">
               <Link href={`/agents/${a.id}`} className="btn">Open builder</Link>
               {a.status !== "retired" && (
-                <Link href={`/agents/${a.id}/run`} className="btn btn-primary">
-                  <RunIcon /> Run
-                </Link>
+                <>
+                  <Link href={`/agents/${a.id}/run`} className="btn">
+                    <RunIcon /> Run form
+                  </Link>
+                  <Link href={`/agents/${a.id}/chat`} className="btn btn-primary">
+                    <ChatIcon /> Chat
+                  </Link>
+                </>
               )}
             </div>
           </div>

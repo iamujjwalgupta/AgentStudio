@@ -120,6 +120,8 @@ export type StepOut = {
   usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number };
   /** Gemini's own parts for this reply, to send back on the next step. */
   gemini?: any[];
+  /** Set when this step was answered by a different model from the agent's (see geminiStep). */
+  model?: string;
 };
 
 /** One model step: the conversation so far in, the model's reply out, both in the Anthropic shape. */
@@ -171,7 +173,7 @@ async function anthropicStep(access: EngineAccess, { system, messages, tools, ma
 }
 
 /** The conversation in Gemini's terms: user/model turns of parts, tool results as functionResponse. */
-function toGeminiContents(messages: any[]) {
+function toGeminiContents(messages: any[], plain = false) {
   const nameOf = new Map<string, string>();
   for (const m of messages) {
     if (m.role === "assistant" && Array.isArray(m.content)) {
@@ -181,7 +183,8 @@ function toGeminiContents(messages: any[]) {
   const contents: any[] = [];
   for (const m of messages) {
     if (m.role === "assistant") {
-      const parts = Array.isArray(m.gemini) && m.gemini.length
+      // Gemini's own parts carry thought signatures, which only the model that wrote them accepts.
+      const parts = !plain && Array.isArray(m.gemini) && m.gemini.length
         ? m.gemini
         : (Array.isArray(m.content) ? m.content : [{ type: "text", text: String(m.content ?? "") }]).flatMap((b: any) =>
             b.type === "text" && b.text ? [{ text: b.text }] : b.type === "tool_use" ? [{ functionCall: { name: b.name, args: b.input ?? {} } }] : [],
@@ -242,7 +245,7 @@ async function geminiStep(access: EngineAccess, input: StepIn): Promise<StepOut>
             {
               role: "user",
               content:
-                "Your last reply could not be used: it was empty, or its tool call was malformed. Carry on with the work: make the next tool call again with valid arguments, splitting very long ones into smaller calls.",
+                "Your last reply could not be used: it was empty, or its tool call was malformed. Carry on with the work: make the next tool call again with valid arguments, using only the tools you were given. If the arguments were very long, shorten them — for example refer to work you saved earlier instead of repeating it.",
             },
           ]
         : input.messages;
@@ -258,13 +261,22 @@ async function geminiStep(access: EngineAccess, input: StepIn): Promise<StepOut>
         unusable++;
         continue;
       }
+      // A Flash model that cannot form a large tool call after being asked
+      // twice usually can on Pro. That one step goes to Pro, so the run is not
+      // lost at its last step; the next step is back on the agent's own model.
+      if (e?.retry && /flash/.test(access.model) && unusable === 2) {
+        unusable++;
+        const stronger = "gemini-2.5-pro";
+        const out = await geminiOnce({ ...access, model: stronger }, input, true).catch(() => null);
+        if (out) return { ...out, gemini: undefined, model: stronger };
+      }
       throw e;
     }
   }
   throw last;
 }
 
-async function geminiOnce(access: EngineAccess, { system, messages, tools, maxTokens }: StepIn): Promise<StepOut> {
+async function geminiOnce(access: EngineAccess, { system, messages, tools, maxTokens }: StepIn, plain = false): Promise<StepOut> {
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(access.model)}:generateContent`,
     {
@@ -272,7 +284,7 @@ async function geminiOnce(access: EngineAccess, { system, messages, tools, maxTo
       headers: { "content-type": "application/json", "x-goog-api-key": access.apiKey },
       body: JSON.stringify({
         system_instruction: { parts: [{ text: system }] },
-        contents: toGeminiContents(messages),
+        contents: toGeminiContents(messages, plain),
         ...(tools.length
           ? {
               tools: [
@@ -284,6 +296,11 @@ async function geminiOnce(access: EngineAccess, { system, messages, tools, maxTo
                   })),
                 },
               ],
+              // Held to the declared functions and their schemas. Without this,
+              // Flash splits a large call into made-up ones ("PresentResultKpis")
+              // or returns a malformed call about one time in three; with it,
+              // it still answers in plain text when it is done.
+              toolConfig: { functionCallingConfig: { mode: "VALIDATED" } },
             }
           : {}),
         // Gemini's thinking counts against the output budget, so it gets more room than Claude.

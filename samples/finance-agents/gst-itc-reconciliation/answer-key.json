@@ -1,0 +1,230 @@
+{
+  "period": "September 2026",
+  "our_gstin": "27AACCF4821K1ZL",
+  "in_books_not_in_2b": [
+    {
+      "supplier": "Peninsula Logistics",
+      "gstin": "24UVBCZ4693B1ZM",
+      "invoice_no": "PL/26-27/0403",
+      "date": "2026-09-21",
+      "taxable": 353014.75,
+      "itc": 42361.77
+    },
+    {
+      "supplier": "Pragati Office Solutions",
+      "gstin": "27BRBCV5431B1ZP",
+      "invoice_no": "POS/26-27/0066",
+      "date": "2026-09-19",
+      "taxable": 225885.94,
+      "itc": 11294.3
+    },
+    {
+      "supplier": "Indrayani Packaging",
+      "gstin": "33VKAFJ7605F1ZL",
+      "invoice_no": "IP/26-27/0108",
+      "date": "2026-09-08",
+      "taxable": 406086.11,
+      "itc": 73095.5
+    },
+    {
+      "supplier": "Pragati Office Solutions",
+      "gstin": "27BRBCV5431B1ZP",
+      "invoice_no": "POS/26-27/0067",
+      "date": "2026-09-01",
+      "taxable": 110843.66,
+      "itc": 19951.86
+    },
+    {
+      "supplier": "Aravali Paints Ltd",
+      "gstin": "27NCGCV8970U1ZI",
+      "invoice_no": "APL/26-27/0224",
+      "date": "2026-09-29",
+      "taxable": 446215.34,
+      "itc": 124940.3
+    }
+  ],
+  "in_2b_not_in_books": [
+    {
+      "supplier": "Rajhans Printers",
+      "gstin": "24BKSCC7597B1ZO",
+      "invoice_no": "RP/26-27/0410",
+      "date": "2026-09-18",
+      "taxable": 302581.17,
+      "itc": 54464.61
+    },
+    {
+      "supplier": "Kalyani Industrial Gases",
+      "gstin": "27AZUCM1764D1ZS",
+      "invoice_no": "KIG/26-27/0377",
+      "date": "2026-09-06",
+      "taxable": 182937.37,
+      "itc": 32928.73
+    },
+    {
+      "supplier": "Malabar Spices & Foods",
+      "gstin": "27PVKCD9744B1ZW",
+      "invoice_no": "MSF/26-27/0133",
+      "date": "2026-09-06",
+      "taxable": 57662.39,
+      "itc": 10379.23
+    },
+    {
+      "supplier": "Peninsula Logistics",
+      "gstin": "24UVBCZ4693B1ZM",
+      "invoice_no": "PL/26-27/0404",
+      "date": "2026-09-09",
+      "taxable": 84118.56,
+      "itc": 15141.34
+    }
+  ],
+  "invoice_number_differs": [
+    {
+      "supplier": "Malabar Spices & Foods",
+      "gstin": "27PVKCD9744B1ZW",
+      "invoice_no": "MSF/26-27/0134",
+      "date": "2026-09-01",
+      "taxable": 322972.63,
+      "itc": 38756.72,
+      "invoice_no_in_books": "MSF-134",
+      "invoice_no_in_2b": "MSF/26-27/0134"
+    },
+    {
+      "supplier": "Shree Balaji Transport Co",
+      "gstin": "27NJRCP1446F1ZC",
+      "invoice_no": "SBT/26-27/0131",
+      "date": "2026-09-16",
+      "taxable": 483513.47,
+      "itc": 58021.62,
+      "invoice_no_in_books": "SBT-131",
+      "invoice_no_in_2b": "SBT/26-27/0131"
+    },
+    {
+      "supplier": "Vaishnavi Canteen Services",
+      "gstin": "29VYMFK8370C1Z3",
+      "invoice_no": "VCS/26-27/0173",
+      "date": "2026-09-22",
+      "taxable": 394900.35,
+      "itc": 71082.06,
+      "invoice_no_in_books": "VCS-173",
+      "invoice_no_in_2b": "VCS/26-27/0173"
+    }
+  ],
+  "tax_amount_mismatch": [
+    {
+      "supplier": "Silicon Coast IT Services",
+      "gstin": "29VNRCG3178R1Z3",
+      "invoice_no": "SCI/26-27/0214",
+      "date": "2026-09-25",
+      "taxable": 315753.06,
+      "itc": 37890.37,
+      "itc_in_books": 56835.55,
+      "itc_in_2b": 37890.37,
+      "eligible": 37890.37
+    },
+    {
+      "supplier": "Aravali Paints Ltd",
+      "gstin": "27NCGCV8970U1ZI",
+      "invoice_no": "APL/26-27/0225",
+      "date": "2026-09-20",
+      "taxable": 268481.27,
+      "itc": 48326.63,
+      "itc_in_books": 48326.63,
+      "itc_in_2b": 50126.63,
+      "eligible": 48326.63
+    }
+  ],
+  "tax_head_mismatch": [
+    {
+      "supplier": "Vaishnavi Canteen Services",
+      "gstin": "29VYMFK8370C1Z3",
+      "invoice_no": "VCS/26-27/0174",
+      "date": "2026-09-23",
+      "taxable": 418837.47,
+      "itc": 117274.49,
+      "booked_as": "CGST + SGST",
+      "in_2b_as": "IGST",
+      "eligible": 117274.49
+    }
+  ],
+  "gstin_mismatch": [
+    {
+      "supplier": "Kalyani Industrial Gases",
+      "gstin": "27AZUCM1764D1ZS",
+      "invoice_no": "KIG/26-27/0378",
+      "date": "2026-09-23",
+      "taxable": 204491.58,
+      "itc": 36808.48,
+      "gstin_in_books": "24AZUCM1764D1ZY",
+      "gstin_in_2b": "27AZUCM1764D1ZS",
+      "eligible": 36808.48
+    }
+  ],
+  "duplicate_in_books": [
+    {
+      "supplier": "Kaveri Pumps & Valves",
+      "gstin": "24SASCM1650T1Z7",
+      "invoice_no": "KPV/26-27/0269",
+      "date": "2026-09-22",
+      "taxable": 7537.61,
+      "itc": 376.88,
+      "excess_itc_in_books": 376.88
+    }
+  ],
+  "itc_not_available_in_2b": [
+    {
+      "supplier": "Satpura Minerals",
+      "gstin": "33FWMCC2582Z1Z7",
+      "invoice_no": "SM/26-27/0223",
+      "date": "2026-09-08",
+      "taxable": 400920.36,
+      "itc": 20046.02,
+      "blocked_itc": 20046.02
+    }
+  ],
+  "rounding_differences": [
+    {
+      "supplier": "Sahyadri Chemicals Pvt Ltd",
+      "gstin": "27JVPCG1436X1Z4",
+      "invoice_no": "SCP/26-27/0227",
+      "date": "2026-09-29",
+      "taxable": 451007.6,
+      "itc": 22550.38,
+      "difference": 0.5
+    },
+    {
+      "supplier": "Sahyadri Chemicals Pvt Ltd",
+      "gstin": "27JVPCG1436X1Z4",
+      "invoice_no": "SCP/26-27/0228",
+      "date": "2026-09-14",
+      "taxable": 263712.95,
+      "itc": 31645.55,
+      "difference": 0.5
+    },
+    {
+      "supplier": "Trimurti Engineering",
+      "gstin": "27UDYCV9087B1ZS",
+      "invoice_no": "TE/26-27/0138",
+      "date": "2026-09-05",
+      "taxable": 300816.04,
+      "itc": 54146.89,
+      "difference": 0.5
+    }
+  ],
+  "counts": {
+    "purchase_register_rows": 105,
+    "gstr2b_rows": 103,
+    "matched_exactly": 87,
+    "matched_within_rounding": 3
+  },
+  "totals": {
+    "itc_as_per_books": 4895308.67,
+    "itc_as_per_2b": 4719055.29,
+    "eligible_itc": 4584295.36,
+    "itc_at_risk_not_in_2b": 271643.73,
+    "itc_in_2b_not_booked": 112913.91,
+    "itc_blocked_not_available": 20046.02,
+    "excess_itc_duplicate_booking": 376.88,
+    "excess_itc_rate_or_value_mismatch": 18945.18
+  },
+  "rules": "Eligible ITC = ITC in 2B (availability Yes) for invoices also in the books: exact matches, within ₹1, invoice number written differently, tax head or GSTIN errors (after correction); the lower of books and 2B where the amounts differ; a duplicate counted once."
+}

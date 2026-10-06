@@ -676,6 +676,7 @@ export default function Builder({
           onEdit={goStep}
           onAllRuns={() => setTab("runs")}
           canRun={!retired && drafted}
+          chatHref={!retired && drafted && !isNew ? `/agents/${agentId}/chat` : null}
         />
       )}
 
@@ -899,6 +900,7 @@ function Overview({
   onEdit,
   onAllRuns,
   canRun,
+  chatHref,
 }: {
   spec: AgentSpec;
   showingLive: boolean;
@@ -916,6 +918,8 @@ function Overview({
   onEdit: (step: number) => void;
   onAllRuns: () => void;
   canRun: boolean;
+  /** The conversation view, once the agent exists. */
+  chatHref?: string | null;
 }) {
   const sources = spec.sources.map((s) => connections.find((c) => c.id === s.connectionId)?.name || s.label || "A connection");
   const inputs = normaliseInputs(spec.inputs as any[]);
@@ -1085,6 +1089,11 @@ function Overview({
             <button className="btn" onClick={onRehearse} disabled={!canRun} title="Runs it, but describes approval-gated actions instead of carrying them out">
               Rehearse safely
             </button>
+            {chatHref && (
+              <Link className="btn" href={chatHref} title="Work with it as a conversation, with follow-up questions">
+                <ChatIcon size={13} /> Chat
+              </Link>
+            )}
           </div>
         </section>
       </aside>

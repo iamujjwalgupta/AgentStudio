@@ -4,13 +4,14 @@ import { buildSystemPrompt, audit } from "./ai";
 import { engineAccess, engineOf, modelAccess, modelStep, type EngineAccess } from "./models";
 import { costOf } from "./pricing";
 import { checkLimits, recordUsage } from "./metering";
+import { STORAGE_ROOT } from "./storage";
 import { notify, approverEmails } from "./notify";
 import { TOOLS, toolById, anthropicTools, type ConnRow, type ToolContext } from "./tools";
 import { skillsFor } from "./skills";
 import { normaliseInputs, specSkillIds, type AgentSpec } from "./types";
 import { maskPII, checkRateLimit } from "./guardrails";
 
-const STORAGE = process.env.STORAGE_DIR || path.join(process.cwd(), "storage");
+const STORAGE = STORAGE_ROOT;
 
 
 type RunRow = {
@@ -21,19 +22,27 @@ type RunRow = {
   status: string;
   state: { messages: any[]; partial: any[]; steps: number; nudges?: number; checked?: boolean };
   started_by: string;
+  chat_id?: string | null;
 };
 
+type ToolModel = { apiKey: string; model: string; engine: "anthropic" | "gemini" };
+
 /**
- * The Anthropic key for actions that call a model of their own (web search),
- * whichever engine the agent itself runs on. Empty when there is none; the
- * action then says so.
+ * The key for actions that call a model of their own (web search), on the
+ * agent's own engine: an agent on Gemini searches with Google on the Gemini key,
+ * one on Claude with Anthropic. Empty when there is none; the action says so.
  */
-async function toolModel(orgId: string): Promise<{ apiKey: string; model: string }> {
+async function toolModel(orgId: string, spec: AgentSpec): Promise<ToolModel> {
+  const engine = engineOf(spec);
   try {
+    if (engine === "gemini") {
+      const a = await engineAccess(orgId, "gemini", spec.model);
+      return { apiKey: a.apiKey, model: a.model, engine };
+    }
     const a = await modelAccess(orgId);
-    return { apiKey: a.apiKey, model: a.model };
+    return { apiKey: a.apiKey, model: a.model, engine };
   } catch {
-    return { apiKey: "", model: "" };
+    return { apiKey: "", model: "", engine };
   }
 }
 
@@ -41,7 +50,7 @@ async function loadContext(
   orgId: string,
   userId: string,
   spec: AgentSpec,
-  model: { apiKey: string; model: string },
+  model: ToolModel,
   runId?: string,
   agentId?: string,
 ): Promise<ToolContext> {
@@ -62,6 +71,7 @@ async function loadContext(
     storageDir: STORAGE,
     apiKey: model.apiKey,
     model: model.model,
+    engine: model.engine,
     runId,
     agentId,
   };
@@ -143,11 +153,15 @@ function unusedActions(spec: AgentSpec, messages: any[]): string[] {
       for (const b of m.content) if (b.type === "tool_use") used.add(b.name);
     }
   }
-  return (spec.tools || [])
+  const missing = (spec.tools || [])
     .map((t) => toolById(t.id))
     .filter((d): d is NonNullable<typeof d> => Boolean(d) && (d!.risk !== "low" || d!.id === "write_file"))
     .filter((d) => !used.has(d.id))
     .map((d) => d.label);
+  // Every agent is given present_result; a run that never shows its result
+  // leaves the user with prose only.
+  if (!used.has("present_result")) missing.push("Present the result (present_result)");
+  return missing;
 }
 
 function safeTrimToolOutput(out: any, maxChars = 20000): string {
@@ -189,6 +203,11 @@ export async function startRun(opts: {
   inputs?: Record<string, string>;
   parentRunId?: string;
   waitForCompletion?: boolean;
+  /** The conversation this run is a turn of, and the person's own words for it. */
+  chatId?: string;
+  message?: string;
+  /** A later turn of a conversation: it answers the new request rather than redoing the whole procedure. */
+  followUp?: boolean;
 }) {
   // 1. Enforce per-agent rate limit
   if (opts.spec.guardrails?.rateLimitRpm) {
@@ -219,8 +238,8 @@ export async function startRun(opts: {
   }
 
   const run = await one<any>(
-    `insert into runs (org_id, agent_id, version, spec, trigger, input, state, started_by, dry_run, inputs, parent_run_id)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id`,
+    `insert into runs (org_id, agent_id, version, spec, trigger, input, state, started_by, dry_run, inputs, parent_run_id, chat_id, message)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning id`,
     [
       opts.orgId,
       opts.agentId,
@@ -228,11 +247,15 @@ export async function startRun(opts: {
       JSON.stringify(opts.spec),
       opts.dryRun ? "rehearsal" : opts.trigger || "manual",
       effectiveInput,
-      JSON.stringify({ messages: [{ role: "user", content: effectiveInput || "Begin." }], partial: [], steps: 0 }),
+      // A follow-up is not held to the full procedure, so it skips the
+      // end-of-run check for actions it never tried.
+      JSON.stringify({ messages: [{ role: "user", content: effectiveInput || "Begin." }], partial: [], steps: 0, ...(opts.followUp ? { checked: true } : {}) }),
       opts.user.id,
       Boolean(opts.dryRun),
       JSON.stringify(opts.inputs || {}),
       opts.parentRunId ?? null,
+      opts.chatId ?? null,
+      opts.message ?? null,
     ],
   );
   await audit(opts.orgId, opts.user, "Started run", "run", run.id, {
@@ -316,7 +339,7 @@ export async function advance(
       run.org_id,
       run.started_by || user.id,
       spec,
-      await toolModel(run.org_id),
+      await toolModel(run.org_id, spec),
       run.id,
       run.agent_id,
     );
@@ -328,14 +351,31 @@ export async function advance(
 
   const usage = () => ({ model, inTok, outTok, cacheRead, cacheWrite });
 
-  const system = buildSystemPrompt(spec, connectionNames, ctx.skills);
+  // A later turn of a conversation answers the new request; the first turn does the work.
+  const followUp = run.chat_id
+    ? Boolean(
+        (
+          await one<any>(
+            `select exists(select 1 from runs where chat_id = $1 and id <> $2
+                             and started_at < (select started_at from runs where id = $2)) as f`,
+            [run.chat_id, runId],
+          )
+        )?.f,
+      )
+    : false;
+  const system = buildSystemPrompt(spec, connectionNames, ctx.skills, { presentResult: true, followUp });
   // Granted by the runtime rather than the spec: load_skill when there is a skill
   // to load, and the document reader when the agent takes a file — it is told to
   // read the file, and it can only do that with the reader.
   const takesFile = normaliseInputs(spec.inputs as any[]).some((i) => i.type === "file");
   const runtimeTools = [
+    // Every agent can present its result as a dashboard with downloads.
+    "present_result",
     ...(ctx.skills.length ? ["load_skill"] : []),
     ...(takesFile && !spec.tools.some((t) => t.id === "read_document") ? ["read_document"] : []),
+    // An agent that works on files alone queries them directly; one with a
+    // database attaches the file to its database queries instead.
+    ...(takesFile && !spec.tools.some((t) => t.id === "sql_query") ? ["query_files"] : []),
   ];
   const tools = anthropicTools(spec.tools, runtimeTools);
   // Unlisted tools default to needing approval, which is the right instinct for
@@ -348,6 +388,11 @@ export async function advance(
   const messages: any[] = [...run.state.messages];
   let steps = run.state.steps || 0;
   let nudges = run.state.nudges || 0;
+  let unknownCalls = 0;
+  // The same call failing the same way, in a row: a model that loops on it is
+  // told to change course, and stopped if it does not.
+  let lastFailure = "";
+  let sameFailures = 0;
   let checked = Boolean(run.state.checked);
   let inTok = 0;
   let outTok = 0;
@@ -386,7 +431,8 @@ export async function advance(
       await recordUsage(
         { orgId: run.org_id, feature: "agent_run", agentId: run.agent_id, runId, userId: (run as any).started_by ?? null },
         engine,
-        model,
+        // Billed as the model that answered: a step can be passed to a stronger one (lib/models).
+        res.model ?? model,
         {
           input: res.usage?.input_tokens,
           output: res.usage?.output_tokens,
@@ -438,8 +484,9 @@ export async function advance(
           role: "user",
           content:
             `Before you finish, check your procedure against what you have actually done. You have not used: ${untried.join(", ")}. ` +
-            `If a step of the procedure calls for one of these, do it now with the tool. If none is needed, reply with your final deliverable ` +
-            `and say why — and do not describe anything as done (held, sent, saved) that you did not do with a tool.`,
+            `If a step of the procedure calls for one of these, do it now with the tool. If none is needed, reply with your final answer ` +
+            `written for the user — what you found and what needs doing — noting in a sentence any action you did not take and why. ` +
+            `Do not mention this check, and do not describe anything as done (held, sent, saved) that you did not do with a tool.`,
         });
         await q(`update runs set state = $2 where id = $1`, [runId, JSON.stringify({ messages, partial: [], steps, nudges, checked })]);
         continue;
@@ -469,8 +516,31 @@ export async function advance(
 
       for (const use of toolUses) {
         const def = toolById(use.name);
-        if (!def) {
-          results.push({ type: "tool_result", tool_use_id: use.id, is_error: true, content: `Unknown tool ${use.name}` });
+        const offered = tools.some((t: any) => t.name === use.name);
+        if (!def || !offered) {
+          // A made-up action ("PresentResultKpis") is shown in the run and
+          // answered with the real list, so the model can recover; one that
+          // keeps coming back ends the run rather than spending its budget.
+          unknownCalls++;
+          const names = tools.map((t: any) => t.name).join(", ");
+          await addStep(runId, await nextIdx(runId), {
+            kind: "tool",
+            tool: use.name,
+            title: "Asked for an action that does not exist",
+            input: use.input,
+            output: { error: `No action called ${use.name}` },
+            status: "error",
+          });
+          if (unknownCalls >= 3) {
+            await finish(runId, "failed", null, `The model kept asking for an action that does not exist (${use.name}), so the run was stopped. Run it again; if it repeats, choose a stronger model for this agent.`, usage());
+            return;
+          }
+          results.push({
+            type: "tool_result",
+            tool_use_id: use.id,
+            is_error: true,
+            content: `There is no action called ${use.name}. Use only these: ${names}. Each takes all of its arguments in one call — present_result takes the title, kpis, charts, tables, findings and actions together.`,
+          });
           continue;
         }
 
@@ -529,7 +599,18 @@ export async function advance(
           });
         } catch (err: any) {
           const msg = err?.message || String(err);
-          results.push({ type: "tool_result", tool_use_id: use.id, is_error: true, content: msg });
+          const signature = `${use.name}\u0000${JSON.stringify(use.input)}\u0000${msg}`;
+          sameFailures = signature === lastFailure ? sameFailures + 1 : 1;
+          lastFailure = signature;
+          results.push({
+            type: "tool_result",
+            tool_use_id: use.id,
+            is_error: true,
+            content:
+              sameFailures >= 2
+                ? `${msg}\n\nThis is exactly the call that already failed ${sameFailures} times. Do not send it again: write it differently (simplify it, or split the work into smaller saved steps), or move on without it.`
+                : msg,
+          });
           await addStep(runId, await nextIdx(runId), {
             kind: "tool",
             tool: use.name,
@@ -539,6 +620,10 @@ export async function advance(
             status: "error",
             duration_ms: Date.now() - ts,
           });
+          if (sameFailures >= 4) {
+            await finish(runId, "failed", null, `The model kept sending the same failing request to ${def.label} (${msg.slice(0, 160)}), so the run was stopped. Run it again; if it repeats, choose a stronger model for this agent.`, usage());
+            return;
+          }
         }
       }
 
@@ -596,7 +681,7 @@ export async function resumeAfterApprovals(runId: string, user: { id: string; na
   // and leave it stranded on 'awaiting_approval' forever.
   let ctx;
   try {
-    ctx = await loadContext(run.org_id, run.started_by || user.id, run.spec, await toolModel(run.org_id));
+    ctx = await loadContext(run.org_id, run.started_by || user.id, run.spec, await toolModel(run.org_id, run.spec), run.id, run.agent_id);
   } catch (err: any) {
     await finish(runId, "failed", null, err?.message || String(err), { model: "", inTok: 0, outTok: 0, cacheRead: 0, cacheWrite: 0 });
     return;

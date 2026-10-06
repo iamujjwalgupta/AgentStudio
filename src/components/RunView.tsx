@@ -5,7 +5,9 @@ import Link from "next/link";
 import SkillFromCorrectionModal, { CorrectionModalContext } from "./SkillFromCorrectionModal";
 import SkillMarkdown from "./SkillMarkdown";
 import ActionPreview from "./approvals/ActionPreview";
-import { AlertIcon, BookIcon, CheckIcon, CopyIcon, CrossIcon, DocIcon, RunIcon, ShieldIcon, SparkIcon, WrenchIcon } from "./agent-ui";
+import DeliverableView from "./deliverable/DeliverableView";
+import { normalizeDeliverable } from "@/lib/deliverable";
+import { AlertIcon, BookIcon, ChatIcon, CheckIcon, CopyIcon, CrossIcon, DocIcon, RunIcon, ShieldIcon, SparkIcon, WrenchIcon } from "./agent-ui";
 import { duration, money, statusOf, tokensText, TRIGGER, triggerKind } from "./runs/run-meta";
 
 type Step = {
@@ -176,7 +178,11 @@ export default function RunView({ runId }: { runId: string }) {
         </div>
         <div className="rv-head-actions">
           <Link href={`/agents/${run.agent_id}`} className="btn btn-ghost">Open agent</Link>
-          <Link href={`/agents/${run.agent_id}/run`} className="btn btn-primary"><RunIcon /> Run again</Link>
+          {run.chat_id ? (
+            <Link href={`/agents/${run.agent_id}/chat?c=${run.chat_id}`} className="btn btn-primary"><ChatIcon size={13} /> Back to the conversation</Link>
+          ) : (
+            <Link href={`/agents/${run.agent_id}/run`} className="btn btn-primary"><RunIcon /> Run again</Link>
+          )}
         </div>
       </header>
 
@@ -195,6 +201,17 @@ export default function RunView({ runId }: { runId: string }) {
         </div>
       )}
       {actionError && <div className="error" style={{ marginBottom: 12 }}>{actionError}</div>}
+
+      {data?.deliverable && (
+        <div className="rv-result">
+          <DeliverableView
+            d={normalizeDeliverable(data.deliverable.spec)}
+            id={data.deliverable.id}
+            compact
+            fullHref={`/deliverables/${data.deliverable.id}`}
+          />
+        </div>
+      )}
 
       <div className="rv-grid">
         <div className="rv-main">
@@ -293,7 +310,7 @@ export default function RunView({ runId }: { runId: string }) {
           {run.output && (
             <section className="rv-card rv-deliverable">
               <div className="rv-card-head">
-                <h2>Deliverable</h2>
+                <h2>{data?.deliverable ? "Written answer" : "Deliverable"}</h2>
                 <div className="rv-card-tools">
                   <button className="btn btn-sm" onClick={() => navigator.clipboard?.writeText(run.output).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1400); })}>
                     {copied ? <><CheckIcon size={12} /> Copied</> : <><CopyIcon size={12} /> Copy</>}

@@ -64,5 +64,11 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
     [id],
   );
 
-  return NextResponse.json({ run, steps, approvals, parentRun, childRuns });
+  // The run's presented result, the latest when it presented more than once.
+  const deliverable = await one<any>(
+    `select id, spec, created_at from deliverables where run_id = $1 order by created_at desc limit 1`,
+    [id],
+  );
+
+  return NextResponse.json({ run, steps, approvals, parentRun, childRuns, deliverable });
 }

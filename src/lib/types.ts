@@ -26,10 +26,12 @@ export type SpecInput = {
 
 /**
  * The files an agent can actually read: what the document reader parses
- * (lib/tools.ts parseDocument). Excel is not among them, so it is not offered.
+ * (lib/tools.ts). Excel is read as .xlsx only; an old .xls has to be saved as
+ * .xlsx or CSV first.
  */
 export const FILE_KINDS: { id: string; label: string; exts: string[] }[] = [
   { id: "csv", label: "CSV", exts: [".csv", ".tsv"] },
+  { id: "excel", label: "Excel", exts: [".xlsx"] },
   { id: "pdf", label: "PDF", exts: [".pdf"] },
   { id: "word", label: "Word", exts: [".docx"] },
   { id: "text", label: "Text", exts: [".txt", ".md", ".json"] },

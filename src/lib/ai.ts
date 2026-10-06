@@ -149,6 +149,7 @@ export function buildSystemPrompt(
   spec: AgentSpec,
   connectionNames: Record<string, string>,
   skills: SkillRow[] = [],
+  opts: { presentResult?: boolean; followUp?: boolean } = {},
 ) {
   const sources = spec.sources
     .map((s) => `- ${connectionNames[s.connectionId] || s.connectionId}${s.scope ? ` (${s.scope})` : ""}`)
@@ -161,7 +162,7 @@ export function buildSystemPrompt(
     `PURPOSE`,
     spec.purpose || "Complete the work described in the procedure below.",
     ``,
-    `PROCEDURE — follow in order`,
+    opts.followUp ? `PROCEDURE — how this work is done` : `PROCEDURE — follow in order`,
     spec.steps.map((s, i) => `${i + 1}. ${s}`).join("\n") || "1. Answer the user's request.",
     ``,
     sources ? `APPROVED SOURCES\n${sources}\n` : "",
@@ -171,7 +172,14 @@ export function buildSystemPrompt(
     skillsBlock(skills),
     `DELIVERABLE`,
     `Format: ${spec.output.format}.${spec.output.instructions ? ` ${spec.output.instructions}` : ""}`,
-    `When you have finished, write the deliverable as your final message. Do not describe what you would do — do it.`,
+    opts.followUp
+      ? `CONVERSATION\nThis is a follow-up in a conversation; the user's message summarises the earlier turns and ends with their new request. Answer that request. Use the procedure, tools, files and data as far as the request needs — re-run a check only when it needs fresh figures — and do not repeat actions already carried out (holds, emails, files) unless the user asks for them again. When the answer needs specifics — names, invoice or cheque numbers, amounts — fetch them with your tools; never write placeholders or refer to items vaguely ("some invoices").\n`
+      : "",
+    opts.presentResult && opts.followUp
+      ? `If your answer has figures, a breakdown or a list worth seeing, call present_result once with them (figures, charts and tables as sql queries, so they are exact). For a short answer, just reply. Never type numbers in that you have not retrieved.`
+      : opts.presentResult
+      ? `When the work is done, call present_result once. The user sees it as a dashboard with Excel, PDF and PowerPoint downloads, so make it complete: 3–6 headline figures (kpis), 1–3 charts that make the pattern visible (bar to compare, donut for the parts of a whole — the parts only, never the total beside them — line over time), the detail tables, findings (what matters and why, worst first) and next actions with owners. Give every figure, chart and table that comes from a database or an uploaded file as a sql query, so it is exact — never type numbers in. Then write a short final message: what you found and what needs doing. Do not describe what you would do — do it.`
+      : `When you have finished, write the deliverable as your final message. Do not describe what you would do — do it.`,
     ``,
     `OPERATING RULES`,
     `- Use the tools provided. Never invent data you have not retrieved.`,

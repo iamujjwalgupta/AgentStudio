@@ -116,3 +116,4 @@
 @media (max-width: 1000px) {
   .rv-grid { grid-template-columns: minmax(0, 1fr); }
 }
+.rv-result { margin-bottom: 16px; }

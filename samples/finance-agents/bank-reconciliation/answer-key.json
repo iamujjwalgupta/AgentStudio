@@ -1,0 +1,172 @@
+{
+  "period": "2026-09-01 to 2026-09-30",
+  "account": "HDFC Bank current account 50200012345678",
+  "opening_balance_bank": 4685310.4,
+  "opening_balance_book": 4685310.4,
+  "unpresented_cheques": [
+    {
+      "cheque_no": "004511",
+      "date": "2026-09-25",
+      "party": "Hindustan Tools & Dies",
+      "amount": 87450
+    },
+    {
+      "cheque_no": "004512",
+      "date": "2026-09-27",
+      "party": "Evergreen Canteen Services",
+      "amount": 64200
+    },
+    {
+      "cheque_no": "004513",
+      "date": "2026-09-29",
+      "party": "Vishwakarma Engineering Works",
+      "amount": 152380.5
+    },
+    {
+      "cheque_no": "004514",
+      "date": "2026-09-30",
+      "party": "Nirmal Steel Traders",
+      "amount": 41775
+    }
+  ],
+  "deposits_in_transit": [
+    {
+      "cheque_no": "771205",
+      "date": "2026-09-29",
+      "party": "Narmada Home Appliances",
+      "amount": 184300
+    },
+    {
+      "cheque_no": "009864",
+      "date": "2026-09-30",
+      "party": "Coastal Marine Exports",
+      "amount": 96750.4
+    },
+    {
+      "cheque_no": "412078",
+      "date": "2026-09-30",
+      "party": "Kaveri Retail Pvt Ltd",
+      "amount": 225000
+    }
+  ],
+  "bank_charges_not_in_books": [
+    {
+      "date": "2026-09-15",
+      "narration": "SMS ALERT CHRGS JUL-SEP26",
+      "reference": "SMS0926",
+      "amount": 45
+    },
+    {
+      "date": "2026-09-15",
+      "narration": "IGST ON SMS ALERT CHRGS",
+      "reference": "SMS0926",
+      "amount": 8.1
+    },
+    {
+      "date": "2026-09-30",
+      "narration": "CHRGS-NEFT/RTGS SEP-26",
+      "reference": "CHG0926",
+      "amount": 1250
+    },
+    {
+      "date": "2026-09-30",
+      "narration": "IGST @18% ON CHRGS SEP-26",
+      "reference": "CHG0926",
+      "amount": 225
+    }
+  ],
+  "interest_not_in_books": [
+    {
+      "date": "2026-09-30",
+      "narration": "INT ON AUTO SWEEP FD 50300098765",
+      "reference": "SWP0926",
+      "amount": 3412.65
+    }
+  ],
+  "direct_debits_not_in_books": [
+    {
+      "date": "2026-09-05",
+      "narration": "ACH D- SURAKSHA FINSERV LTD-LN EMI SEP26",
+      "reference": "ACH0905SFL0812",
+      "amount": 112450
+    },
+    {
+      "date": "2026-09-10",
+      "narration": "ACH D- NAVBHARAT GENERAL INS-PREM POLICY 4471",
+      "reference": "ACH1010NGI4471",
+      "amount": 38940
+    }
+  ],
+  "direct_credits_not_in_books": [
+    {
+      "date": "2026-09-18",
+      "narration": "NEFT CR-ICIC0000104-SAHYADRI AGRO FOODS-ICICN26091800231",
+      "reference": "ICICN26091800231",
+      "amount": 295000
+    },
+    {
+      "date": "2026-09-27",
+      "narration": "IMPS CR-COASTAL MARINE EXPORTS-627009412",
+      "reference": "627009412",
+      "amount": 64200
+    }
+  ],
+  "cheques_returned_not_in_books": [
+    {
+      "cheque_no": "287341",
+      "party": "Meghdoot Distributors",
+      "amount": 236000,
+      "return_charges": 590,
+      "date": "2026-09-15"
+    }
+  ],
+  "amount_differences": [
+    {
+      "reference": "HDFCN52609140031248",
+      "party": "Royal Fabricators",
+      "book": 54300,
+      "bank": 45300,
+      "difference": 9000,
+      "nature": "payment recorded too high in books",
+      "effect_on_book_balance": "+9000"
+    },
+    {
+      "reference": "SBINN26091700031262",
+      "party": "Kaveri Retail Pvt Ltd",
+      "book": 18450,
+      "bank": 18540,
+      "difference": -90,
+      "nature": "receipt recorded too low in books",
+      "effect_on_book_balance": "+90"
+    }
+  ],
+  "duplicate_book_entries": [
+    {
+      "reference": "HDFCN52609220031249",
+      "voucher": "PV/26-27/0911",
+      "party": "Om Sai Security Services",
+      "amount": 126500,
+      "effect_on_book_balance": "+126500"
+    }
+  ],
+  "closing_balance_bank": 1048405.32,
+  "closing_balance_book": 1099955.67,
+  "difference_before_reconciliation": -51550.35,
+  "totals": {
+    "deposits_in_transit": 506050.4,
+    "unpresented_cheques": 345805.5,
+    "bank_charges_not_in_books": 1528.1,
+    "interest_not_in_books": 3412.65,
+    "direct_debits_not_in_books": 151390,
+    "direct_credits_not_in_books": 359200,
+    "cheques_returned_not_in_books": 236590,
+    "book_errors_net": 135590
+  },
+  "adjusted_bank_balance": 1208650.22,
+  "adjusted_book_balance": 1208650.22,
+  "unexplained_difference": 0,
+  "rows": {
+    "bank_statement": 98,
+    "bank_book": 96
+  }
+}

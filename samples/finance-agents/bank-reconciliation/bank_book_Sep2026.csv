@@ -1,0 +1,97 @@
+Date,Voucher Type,Voucher No,Particulars,Instrument No,Debit,Credit,Narration
+01-Sep-2026,,,Opening Balance,,4685310.40,,
+01-Sep-2026,Payment,PV/26-27/0939,Salary payable - August 2026,BULK260901SAL,,1845000.00,Salary payable - August 2026
+02-Sep-2026,Journal,JV/26-27/0151,Bank charges,,,1534.00,Bank charges for August 2026 as per advice
+02-Sep-2026,Receipt,RV/26-27/0411,Kaveri Retail Pvt Ltd,SBINN26090200031250,197514.22,,Received from Kaveri Retail Pvt Ltd by NEFT
+03-Sep-2026,Receipt,RV/26-27/0412,Kaveri Retail Pvt Ltd,SBINN26090300031251,70815.50,,Received from Kaveri Retail Pvt Ltd by NEFT
+03-Sep-2026,Receipt,RV/26-27/0413,Indus Valley Traders,UTIBN26090300031252,598077.00,,Received from Indus Valley Traders by NEFT
+04-Sep-2026,Payment,PV/26-27/0881,Precision Bearings Co,HDFCN52609040031208,,110772.81,NEFT to Precision Bearings Co against bills
+04-Sep-2026,Receipt,RV/26-27/0436,Indus Valley Traders,318842,145600.00,,"Ch. No. 318842 deposited, received from Indus Valley Traders"
+05-Sep-2026,Payment,PV/26-27/0882,Evergreen Canteen Services,HDFCN52609050031209,,53931.82,NEFT to Evergreen Canteen Services against bills
+05-Sep-2026,Payment,PV/26-27/0883,Hindustan Tools & Dies,HDFCN52609050031210,,180163.40,NEFT to Hindustan Tools & Dies against bills
+05-Sep-2026,Payment,PV/26-27/0884,Rathi Polymers Pvt Ltd,HDFCN52609050031211,,14612.27,NEFT to Rathi Polymers Pvt Ltd against bills
+05-Sep-2026,Payment,PV/26-27/0941,Rent - Andheri office,HDFCR52609050031275,,285000.00,Rent - Andheri office
+06-Sep-2026,Payment,PV/26-27/0924,Vishwakarma Engineering Works,004501,,132444.13,Ch. No. 004501 issued to Vishwakarma Engineering Works
+06-Sep-2026,Receipt,RV/26-27/0414,Indus Valley Traders,UTIBN26090600031253,758449.39,,Received from Indus Valley Traders by NEFT
+07-Sep-2026,Payment,PV/26-27/0885,Royal Fabricators,HDFCN52609070031212,,69158.18,NEFT to Royal Fabricators against bills
+07-Sep-2026,Payment,PV/26-27/0925,Silverline Insurance Brokers,004502,,27016.43,Ch. No. 004502 issued to Silverline Insurance Brokers
+07-Sep-2026,Payment,PV/26-27/0938,TDS payable - August 2026,ITNS28126090700451,,184230.00,TDS payable - August 2026
+07-Sep-2026,Receipt,RV/26-27/0415,Kaveri Retail Pvt Ltd,SBINN26090700031254,132791.71,,Received from Kaveri Retail Pvt Ltd by NEFT
+08-Sep-2026,Payment,PV/26-27/0886,Shree Ganesh Logistics Pvt Ltd,HDFCN52609080031213,,160305.09,NEFT to Shree Ganesh Logistics Pvt Ltd against bills
+08-Sep-2026,Payment,PV/26-27/0887,Royal Fabricators,HDFCN52609080031214,,98263.68,NEFT to Royal Fabricators against bills
+08-Sep-2026,Payment,PV/26-27/0888,Precision Bearings Co,HDFCN52609080031215,,87126.80,NEFT to Precision Bearings Co against bills
+08-Sep-2026,Payment,PV/26-27/0889,Precision Bearings Co,HDFCN52609080031246,,75000.00,NEFT to Precision Bearings Co against bills
+08-Sep-2026,Payment,PV/26-27/0890,Sai Krupa Electricals,HDFCN52609080031247,,75000.00,NEFT to Sai Krupa Electricals against bills
+09-Sep-2026,Payment,PV/26-27/0891,Royal Fabricators,HDFCR52609090031216,,419095.38,RTGS to Royal Fabricators against bills
+09-Sep-2026,Payment,PV/26-27/0926,Shree Ganesh Logistics Pvt Ltd,004503,,85615.73,Ch. No. 004503 issued to Shree Ganesh Logistics Pvt Ltd
+09-Sep-2026,Receipt,RV/26-27/0416,Indus Valley Traders,UTIBN26090800031255,68920.71,,Received from Indus Valley Traders by NEFT
+09-Sep-2026,Receipt,RV/26-27/0437,Ganga Textiles,052291,98250.75,,"Ch. No. 052291 deposited, received from Ganga Textiles"
+10-Sep-2026,Payment,PV/26-27/0892,Sai Krupa Electricals,HDFCN52609100031217,,121052.96,NEFT to Sai Krupa Electricals against bills
+11-Sep-2026,Payment,PV/26-27/0893,Nirmal Steel Traders,HDFCR52609110031218,,631299.10,RTGS to Nirmal Steel Traders against bills
+11-Sep-2026,Payment,PV/26-27/0894,Royal Fabricators,HDFCN52609110031219,,103958.48,NEFT to Royal Fabricators against bills
+11-Sep-2026,Payment,PV/26-27/0927,Silverline Insurance Brokers,004504,,132076.07,Ch. No. 004504 issued to Silverline Insurance Brokers
+11-Sep-2026,Payment,PV/26-27/0928,Apex Packaging Solutions Pvt Ltd,004505,,124222.66,Ch. No. 004505 issued to Apex Packaging Solutions Pvt Ltd
+11-Sep-2026,Receipt,RV/26-27/0418,Indus Valley Traders,UTIBN26091100031257,185971.03,,Received from Indus Valley Traders by NEFT
+11-Sep-2026,Receipt,RV/26-27/0438,Meghdoot Distributors,287341,236000.00,,"Ch. No. 287341 deposited, received from Meghdoot Distributors"
+12-Sep-2026,Payment,PV/26-27/0895,Sai Krupa Electricals,HDFCN52609120031220,,184603.90,NEFT to Sai Krupa Electricals against bills
+12-Sep-2026,Payment,PV/26-27/0896,Vishwakarma Engineering Works,HDFCN52609120031221,,128401.72,NEFT to Vishwakarma Engineering Works against bills
+12-Sep-2026,Payment,PV/26-27/0929,Hindustan Tools & Dies,004506,,20620.31,Ch. No. 004506 issued to Hindustan Tools & Dies
+12-Sep-2026,Payment,PV/26-27/0930,Rathi Polymers Pvt Ltd,004507,,141509.63,Ch. No. 004507 issued to Rathi Polymers Pvt Ltd
+12-Sep-2026,Payment,PV/26-27/0942,Electricity - factory,MSEB0912880241,,162418.00,Electricity - factory
+12-Sep-2026,Receipt,RV/26-27/0417,Indus Valley Traders,UTIBN26091100031256,231277.83,,Received from Indus Valley Traders by NEFT
+13-Sep-2026,Payment,PV/26-27/0897,Evergreen Canteen Services,HDFCN52609130031222,,34841.55,NEFT to Evergreen Canteen Services against bills
+14-Sep-2026,Payment,PV/26-27/0898,Silverline Insurance Brokers,HDFCN52609140031223,,100456.27,NEFT to Silverline Insurance Brokers against bills
+14-Sep-2026,Payment,PV/26-27/0899,Silverline Insurance Brokers,HDFCN52609140031224,,13512.94,NEFT to Silverline Insurance Brokers against bills
+14-Sep-2026,Payment,PV/26-27/0900,Royal Fabricators,HDFCN52609140031248,,54300.00,NEFT to Royal Fabricators against bills
+14-Sep-2026,Receipt,RV/26-27/0419,Meghdoot Distributors,BKIDN26091400031258,189288.20,,Received from Meghdoot Distributors by NEFT
+15-Sep-2026,Payment,PV/26-27/0901,Om Sai Security Services,HDFCN52609150031225,,140086.28,NEFT to Om Sai Security Services against bills
+15-Sep-2026,Payment,PV/26-27/0931,Nirmal Steel Traders,004508,,52877.19,Ch. No. 004508 issued to Nirmal Steel Traders
+16-Sep-2026,Payment,PV/26-27/0902,Royal Fabricators,HDFCN52609160031226,,25685.94,NEFT to Royal Fabricators against bills
+16-Sep-2026,Receipt,RV/26-27/0420,Kaveri Retail Pvt Ltd,SBINN26091500031259,235406.43,,Received from Kaveri Retail Pvt Ltd by NEFT
+17-Sep-2026,Receipt,RV/26-27/0421,Ganga Textiles,PUNBN26091700031260,518324.94,,Received from Ganga Textiles by NEFT
+17-Sep-2026,Receipt,RV/26-27/0422,Deccan Pharma Distributors,YESBN26091700031261,534078.14,,Received from Deccan Pharma Distributors by NEFT
+17-Sep-2026,Receipt,RV/26-27/0423,Kaveri Retail Pvt Ltd,SBINN26091700031262,18450.00,,Received from Kaveri Retail Pvt Ltd by NEFT
+18-Sep-2026,Payment,PV/26-27/0932,Sai Krupa Electricals,004509,,115740.14,Ch. No. 004509 issued to Sai Krupa Electricals
+19-Sep-2026,Payment,PV/26-27/0903,Om Sai Security Services,HDFCN52609190031227,,16918.15,NEFT to Om Sai Security Services against bills
+19-Sep-2026,Payment,PV/26-27/0904,Apex Packaging Solutions Pvt Ltd,HDFCR52609190031228,,437398.97,RTGS to Apex Packaging Solutions Pvt Ltd against bills
+19-Sep-2026,Payment,PV/26-27/0905,Vishwakarma Engineering Works,HDFCR52609190031229,,372520.33,RTGS to Vishwakarma Engineering Works against bills
+19-Sep-2026,Payment,PV/26-27/0940,GST payable - August 2026,26092700012345,,345670.00,GST payable - August 2026
+19-Sep-2026,Receipt,RV/26-27/0424,Meghdoot Distributors,BKIDN26091900031263,376304.07,,Received from Meghdoot Distributors by NEFT
+19-Sep-2026,Receipt,RV/26-27/0439,Deccan Pharma Distributors,640017,312480.00,,"Ch. No. 640017 deposited, received from Deccan Pharma Distributors"
+20-Sep-2026,Payment,PV/26-27/0933,Silverline Insurance Brokers,004510,,35498.78,Ch. No. 004510 issued to Silverline Insurance Brokers
+20-Sep-2026,Receipt,RV/26-27/0425,Sahyadri Agro Foods,ICICN26092000031264,32934.79,,Received from Sahyadri Agro Foods by NEFT
+20-Sep-2026,Receipt,RV/26-27/0426,Meghdoot Distributors,BKIDN26092000031265,47180.76,,Received from Meghdoot Distributors by NEFT
+21-Sep-2026,Payment,PV/26-27/0906,Hindustan Tools & Dies,HDFCN52609210031230,,92951.27,NEFT to Hindustan Tools & Dies against bills
+21-Sep-2026,Payment,PV/26-27/0907,Shree Ganesh Logistics Pvt Ltd,HDFCN52609210031231,,80010.18,NEFT to Shree Ganesh Logistics Pvt Ltd against bills
+21-Sep-2026,Payment,PV/26-27/0908,Nirmal Steel Traders,HDFCN52609210031232,,185550.34,NEFT to Nirmal Steel Traders against bills
+22-Sep-2026,Payment,PV/26-27/0909,Royal Fabricators,HDFCN52609220031233,,41600.81,NEFT to Royal Fabricators against bills
+22-Sep-2026,Payment,PV/26-27/0910,Om Sai Security Services,HDFCN52609220031249,,126500.00,NEFT to Om Sai Security Services against bills
+22-Sep-2026,Payment,PV/26-27/0911,Om Sai Security Services,HDFCN52609220031249,,126500.00,NEFT to Om Sai Security Services against bills
+22-Sep-2026,Receipt,RV/26-27/0428,Meghdoot Distributors,BKIDN26092200031267,39742.11,,Received from Meghdoot Distributors by NEFT
+23-Sep-2026,Payment,PV/26-27/0912,Silverline Insurance Brokers,HDFCR52609230031234,,474538.33,RTGS to Silverline Insurance Brokers against bills
+23-Sep-2026,Payment,PV/26-27/0913,Evergreen Canteen Services,HDFCN52609230031235,,47145.33,NEFT to Evergreen Canteen Services against bills
+23-Sep-2026,Receipt,RV/26-27/0427,Meghdoot Distributors,BKIDN26092200031266,49097.36,,Received from Meghdoot Distributors by NEFT
+23-Sep-2026,Receipt,RV/26-27/0429,Sahyadri Agro Foods,ICICN26092200031268,178086.74,,Received from Sahyadri Agro Foods by NEFT
+24-Sep-2026,Payment,PV/26-27/0914,Silverline Insurance Brokers,HDFCN52609240031236,,49999.51,NEFT to Silverline Insurance Brokers against bills
+24-Sep-2026,Payment,PV/26-27/0915,Royal Fabricators,HDFCN52609240031237,,46546.41,NEFT to Royal Fabricators against bills
+24-Sep-2026,Receipt,RV/26-27/0430,Narmada Home Appliances,HDFCN26092400031269,79781.32,,Received from Narmada Home Appliances by NEFT
+25-Sep-2026,Payment,PV/26-27/0934,Hindustan Tools & Dies,004511,,87450.00,Ch. No. 004511 issued to Hindustan Tools & Dies
+25-Sep-2026,Receipt,RV/26-27/0432,Coastal Marine Exports,KKBKN26092500031271,50042.32,,Received from Coastal Marine Exports by NEFT
+25-Sep-2026,Receipt,RV/26-27/0433,Coastal Marine Exports,KKBKN26092500031272,53271.56,,Received from Coastal Marine Exports by NEFT
+26-Sep-2026,Payment,PV/26-27/0916,Rathi Polymers Pvt Ltd,HDFCN52609260031238,,71743.31,NEFT to Rathi Polymers Pvt Ltd against bills
+26-Sep-2026,Payment,PV/26-27/0917,Precision Bearings Co,HDFCN52609260031239,,180327.37,NEFT to Precision Bearings Co against bills
+26-Sep-2026,Payment,PV/26-27/0918,Silverline Insurance Brokers,HDFCN52609260031240,,42485.04,NEFT to Silverline Insurance Brokers against bills
+26-Sep-2026,Payment,PV/26-27/0919,Apex Packaging Solutions Pvt Ltd,HDFCN52609260031241,,40123.91,NEFT to Apex Packaging Solutions Pvt Ltd against bills
+26-Sep-2026,Receipt,RV/26-27/0431,Meghdoot Distributors,BKIDN26092500031270,79981.96,,Received from Meghdoot Distributors by NEFT
+26-Sep-2026,Receipt,RV/26-27/0434,Ganga Textiles,PUNBN26092600031273,126849.58,,Received from Ganga Textiles by NEFT
+26-Sep-2026,Receipt,RV/26-27/0435,Meghdoot Distributors,BKIDN26092600031274,163818.38,,Received from Meghdoot Distributors by NEFT
+27-Sep-2026,Payment,PV/26-27/0920,Silverline Insurance Brokers,HDFCN52609270031242,,137347.77,NEFT to Silverline Insurance Brokers against bills
+27-Sep-2026,Payment,PV/26-27/0935,Evergreen Canteen Services,004512,,64200.00,Ch. No. 004512 issued to Evergreen Canteen Services
+28-Sep-2026,Payment,PV/26-27/0921,Hindustan Tools & Dies,HDFCN52609280031243,,141869.79,NEFT to Hindustan Tools & Dies against bills
+29-Sep-2026,Payment,PV/26-27/0922,Vishwakarma Engineering Works,HDFCN52609290031244,,180144.18,NEFT to Vishwakarma Engineering Works against bills
+29-Sep-2026,Payment,PV/26-27/0923,Silverline Insurance Brokers,HDFCN52609290031245,,89063.79,NEFT to Silverline Insurance Brokers against bills
+29-Sep-2026,Payment,PV/26-27/0936,Vishwakarma Engineering Works,004513,,152380.50,Ch. No. 004513 issued to Vishwakarma Engineering Works
+29-Sep-2026,Receipt,RV/26-27/0440,Narmada Home Appliances,771205,184300.00,,"Ch. No. 771205 deposited, received from Narmada Home Appliances"
+30-Sep-2026,Payment,PV/26-27/0937,Nirmal Steel Traders,004514,,41775.00,Ch. No. 004514 issued to Nirmal Steel Traders
+30-Sep-2026,Receipt,RV/26-27/0441,Coastal Marine Exports,009864,96750.40,,"Ch. No. 009864 deposited, received from Coastal Marine Exports"
+30-Sep-2026,Receipt,RV/26-27/0442,Kaveri Retail Pvt Ltd,412078,225000.00,,"Ch. No. 412078 deposited, received from Kaveri Retail Pvt Ltd"

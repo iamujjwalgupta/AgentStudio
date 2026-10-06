@@ -461,3 +461,48 @@ select o.id, 'provider', 'anthropic', 'month', o.monthly_cap_usd, 'Carried over 
   from orgs o
  where o.monthly_cap_usd is not null
 on conflict do nothing;
+
+-- An agent's result as structured content (lib/deliverable.ts): headline
+-- figures, charts, tables, findings and actions, shown as a dashboard and
+-- downloadable as Excel, PDF and PowerPoint. Written by the present_result
+-- action; a run may present more than once, and the latest is the one shown.
+create table if not exists deliverables (
+  id          uuid primary key default gen_random_uuid(),
+  org_id      uuid not null references orgs(id) on delete cascade,
+  run_id      uuid references runs(id) on delete cascade,
+  agent_id    uuid references agents(id) on delete set null,
+  spec        jsonb not null,
+  created_at  timestamptz not null default now()
+);
+create index if not exists deliverables_run_idx on deliverables (run_id, created_at desc);
+create index if not exists deliverables_org_idx on deliverables (org_id, created_at desc);
+
+-- Named steps of an agent's work over uploaded files ("matches", "summary"):
+-- the SELECT behind each, kept per run so later queries and the result
+-- dashboard can use it by name instead of repeating it. Recreated in order in
+-- each query session; a later turn of the same conversation sees them too.
+create table if not exists file_views (
+  run_id      uuid not null references runs(id) on delete cascade,
+  name        text not null,
+  sql         text not null,
+  created_at  timestamptz not null default now(),
+  primary key (run_id, name)
+);
+
+-- Conversations with an agent. Each message is an ordinary run (recorded,
+-- governed, approvable) tied to its conversation; a follow-up run is given the
+-- earlier turns as context. runs.message keeps the person's own words, while
+-- runs.input holds the full prompt the agent was given.
+create table if not exists chats (
+  id          uuid primary key default gen_random_uuid(),
+  org_id      uuid not null references orgs(id) on delete cascade,
+  agent_id    uuid not null references agents(id) on delete cascade,
+  user_id     uuid not null references users(id) on delete cascade,
+  title       text not null default '',
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+create index if not exists chats_owner_idx on chats (org_id, user_id, agent_id, updated_at desc);
+alter table runs add column if not exists chat_id uuid references chats(id) on delete set null;
+alter table runs add column if not exists message text;
+create index if not exists runs_chat_idx on runs (chat_id, started_at);
