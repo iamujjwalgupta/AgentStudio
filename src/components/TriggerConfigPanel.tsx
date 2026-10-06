@@ -1,472 +1,429 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import type { AgentSpec } from "@/lib/types";
-import GuardrailsConfigCard from "./GuardrailsConfigCard";
+import { useEffect, useState } from "react";
+import { normaliseInputs, type AgentSpec } from "@/lib/types";
+import { parseSchedule, planFrom, unattendedNotes, type Schedule } from "@/lib/schedule";
+import { formatWhen } from "@/lib/format";
+import { AlertIcon, CheckIcon, ClockIcon, CopyIcon, FormIcon, PlugIcon, RunIcon } from "@/components/agent-ui";
 
-interface TriggerConfigPanelProps {
-  spec: AgentSpec;
-  set: (p: Partial<AgentSpec>) => void;
-  agentId: string;
-  agentName?: string;
-  timezone?: string;
-  agentStatus?: string;
+/**
+ * The Schedule step: on demand, or on a repeating schedule picked with a day and
+ * a time. The choices write the plain-English sentence the scheduler reads
+ * (lib/schedule.ts), and only sentences it runs exactly are ever written.
+ *
+ * A schedule only fires for the published version, so a change made here takes
+ * effect when the agent is next published.
+ */
+
+const WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const DAY_SHORT: Record<string, string> = { monday: "Mon", tuesday: "Tue", wednesday: "Wed", thursday: "Thu", friday: "Fri", saturday: "Sat", sunday: "Sun" };
+const ORD_WORD = ["", "first", "second", "third", "fourth", "fifth"];
+const suffix = (n: number) => (n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th");
+
+type Repeat = "daily" | "weekdays" | "weekly" | "monthly" | "quarterly";
+/** For monthly: "5" is the 5th calendar day, "w1".."w5" the nth working day, "wl" the last working day. */
+type Pick = { repeat: Repeat; weekday: string; monthDay: string; time: string };
+
+const DEFAULT_PICK: Pick = { repeat: "weekly", weekday: "monday", monthDay: "w1", time: "09:00" };
+
+function fromSchedule(s: Schedule | null): Pick | null {
+  if (!s) return null;
+  const base = { ...DEFAULT_PICK, time: s.time };
+  if (s.freq === "daily" || s.freq === "weekdays" || s.freq === "quarterly") return { ...base, repeat: s.freq };
+  // The parser numbers weekdays from Sunday.
+  if (s.freq === "weekly") return { ...base, repeat: "weekly", weekday: WEEKDAYS[((s.weekday ?? 1) + 6) % 7] };
+  const d = s.day ?? 1;
+  return { ...base, repeat: "monthly", monthDay: s.workingDay ? (d === -1 ? "wl" : `w${d}`) : String(d) };
 }
 
-const SCHEDULE_PRESETS = [
-  { label: "Every weekday at 8:00 AM", val: "weekdays at 8:00am", cron: "0 8 * * 1-5" },
-  { label: "Every Monday at 9:00 AM", val: "every monday at 9:00am", cron: "0 9 * * 1" },
-  { label: "Daily at midnight", val: "daily at 12:00am", cron: "0 0 * * *" },
-  { label: "Every 2 hours", val: "every 2 hours", cron: "0 */2 * * *" },
-];
+function toSentence(p: Pick): string {
+  const at = `at ${p.time}`;
+  switch (p.repeat) {
+    case "daily":
+      return `every day ${at}`;
+    case "weekdays":
+      return `every weekday ${at}`;
+    case "weekly":
+      return `every ${p.weekday} ${at}`;
+    case "quarterly":
+      return `quarterly ${at}`;
+    case "monthly": {
+      if (p.monthDay === "wl") return `last working day of the month ${at}`;
+      if (p.monthDay.startsWith("w")) return `${ORD_WORD[Number(p.monthDay.slice(1))]} working day of the month ${at}`;
+      const n = Number(p.monthDay);
+      return `monthly on the ${n}${suffix(n)} ${at}`;
+    }
+  }
+}
 
-export default function TriggerConfigPanel({
+function describe(p: Pick): string {
+  const time = p.time;
+  switch (p.repeat) {
+    case "daily":
+      return `every day at ${time}`;
+    case "weekdays":
+      return `every working day (Mon–Fri) at ${time}`;
+    case "weekly":
+      return `every ${p.weekday[0].toUpperCase()}${p.weekday.slice(1)} at ${time}`;
+    case "quarterly":
+      return `on the first working day of each quarter at ${time}`;
+    case "monthly": {
+      if (p.monthDay === "wl") return `on the last working day of each month at ${time}`;
+      if (p.monthDay.startsWith("w")) return `on the ${ORD_WORD[Number(p.monthDay.slice(1))]} working day of each month at ${time}`;
+      const n = Number(p.monthDay);
+      return `on the ${n}${suffix(n)} of each month at ${time}`;
+    }
+  }
+}
+
+export default function ScheduleStep({
   spec,
   set,
   agentId,
-  agentName = "Agent",
   timezone = "UTC",
-  agentStatus = "draft",
-}: TriggerConfigPanelProps) {
-  const router = useRouter();
+  isLive,
+  nextRunAt,
+}: {
+  spec: AgentSpec;
+  set: (p: Partial<AgentSpec>) => void;
+  agentId: string;
+  timezone?: string;
+  isLive: boolean;
+  /** When the live version is next due, from the server. */
+  nextRunAt: string | null;
+}) {
+  const [copied, setCopied] = useState<"" | "url" | "body">("");
+  // A note for scheduled runs is rarely needed when there are no fields to fill, so it is tucked away until asked for.
+  const [noteOpen, setNoteOpen] = useState(!!(spec.trigger.input || "").trim());
+  const [origin, setOrigin] = useState("");
+  const [docs, setDocs] = useState<{ id: string; name: string }[] | null>(null);
+  useEffect(() => setOrigin(window.location.origin), []);
 
-  const [loadingSchedule, setLoadingSchedule] = useState(false);
-  const [armed, setArmed] = useState(true);
-  const [nextRunAt, setNextRunAt] = useState<string | null>(null);
-  const [description, setDescription] = useState("");
-  const [pastRuns, setPastRuns] = useState<any[]>([]);
-  const [runningNow, setRunningNow] = useState(false);
-  const [testRunMsg, setTestRunMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const [copiedCurl, setCopiedCurl] = useState(false);
+  // Event triggers were never wired to anything; an old spec holding one runs on demand.
+  const type = spec.trigger.type === "schedule" ? "schedule" : "manual";
+  const setTrigger = (patch: Partial<AgentSpec["trigger"]>) => set({ trigger: { ...spec.trigger, ...patch } });
+  const text = spec.trigger.schedule || "";
+  const parsed = parseSchedule(text).schedule;
+  const pick = fromSchedule(parsed);
+  const current = pick ?? DEFAULT_PICK;
+  const unreadable = type === "schedule" && !!text.trim() && !parsed;
+  const choose = (patch: Partial<Pick>) => setTrigger({ type: "schedule", schedule: toSentence({ ...current, ...patch }) });
+  const plan = planFrom(toSentence(current), timezone);
 
-  // Fetch operational schedule status from server when trigger is on schedule
+  const inputs = normaliseInputs(spec.inputs as any[]);
+  const standing = spec.trigger.inputs || {};
+  const setStanding = (key: string, v: string) => setTrigger({ inputs: { ...standing, [key]: v } });
+  const empty = inputs.filter((i) => !(standing[i.key] ?? "").trim());
+  const missing = empty.filter((i) => i.required);
+  const hasInstruction = !!(spec.trigger.input || "").trim();
+  // The same test the scheduler's own warnings use (lib/schedule.ts): empty values with no standing instruction.
+  const unattended = unattendedNotes({ inputs, trigger: spec.trigger }).length > 0;
+  const endpoint = `${origin}/api/v1/agents/${agentId}/invoke`;
+  // What a caller sends: the same fields the run form asks for (see /api/v1/agents/[id]/invoke).
+  const exampleBody = JSON.stringify(
+    {
+      input: "What you would type in the run box",
+      ...(inputs.length
+        ? { inputs: Object.fromEntries(inputs.map((i) => [i.key, i.type === "file" ? "name-of-uploaded-document.pdf" : i.type === "number" ? 0 : i.type === "date" ? "2026-10-01" : (i.options ?? [])[0] ?? ""])) }
+        : {}),
+      dryRun: false,
+    },
+    null,
+    2,
+  );
+  const copy = (what: "url" | "body", value: string) => {
+    navigator.clipboard?.writeText(value);
+    setCopied(what);
+    setTimeout(() => setCopied(""), 1800);
+  };
+
+  // Uploaded documents, so a scheduled run can be pointed at a file by name.
+  const hasFile = inputs.some((i) => i.type === "file");
   useEffect(() => {
-    let active = true;
-    if (spec.trigger.type === "schedule" && agentId) {
-      setLoadingSchedule(true);
-      fetch(`/api/agents/${agentId}/schedule`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (active && data.ok) {
-            setArmed(data.armed ?? true);
-            setNextRunAt(data.nextRunAt);
-            setDescription(data.description || "");
-            setPastRuns(data.pastScheduledRuns || []);
-          }
-        })
-        .catch((err) => console.warn("Could not load schedule telemetry:", err))
-        .finally(() => {
-          if (active) setLoadingSchedule(false);
-        });
-    }
+    if (type !== "schedule" || !hasFile) return;
+    let live = true;
+    fetch("/api/documents")
+      .then((r) => r.json())
+      .then((j) => live && setDocs(Array.isArray(j.documents) ? j.documents : []))
+      .catch(() => live && setDocs([]));
     return () => {
-      active = false;
+      live = false;
     };
-  }, [spec.trigger.type, agentId]);
-
-  // Handle armed/paused toggle
-  const handleToggleArmed = async (newArmed: boolean) => {
-    setArmed(newArmed);
-    try {
-      await fetch(`/api/agents/${agentId}/schedule`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          schedule: spec.trigger.schedule || "weekdays at 8:00am",
-          armed: newArmed,
-          standingInput: spec.trigger.input || "",
-        }),
-      });
-    } catch (err) {
-      console.warn("Failed to persist armed state:", err);
-    }
-  };
-
-  // Immediate test run of the scheduled agent task
-  const handleRunNow = async () => {
-    setRunningNow(true);
-    setTestRunMsg(null);
-    try {
-      const res = await fetch(`/api/agents/${agentId}/schedule`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "run-now",
-          standingInput: spec.trigger.input || `Scheduled test execution for ${agentName}`,
-        }),
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || "Failed to trigger scheduled run");
-      router.push(`/runs/${j.runId}`);
-    } catch (err: any) {
-      setTestRunMsg({ kind: "err", text: err.message || "Failed to run scheduled job" });
-      setRunningNow(false);
-    }
-  };
-
-  const handleCopyCurl = () => {
-    const curl = `curl -X POST http://localhost:3000/api/v1/agents/${agentId}/run \\\n  -H "Content-Type: application/json" \\\n  -d '{"input": "Your prompt instruction here"}'`;
-    navigator.clipboard.writeText(curl);
-    setCopiedCurl(true);
-    setTimeout(() => setCopiedCurl(false), 2000);
-  };
-
-  const currentSchedule = spec.trigger.schedule || "";
+  }, [type, hasFile]);
 
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-        <div>
-          <h2>When it runs and how far it can go</h2>
-          <p className="sub-line" style={{ marginTop: 2, marginBottom: 16 }}>
-            Define how and when this agent is invoked — on demand, on a recurring cron cadence, or reactively on events.
-          </p>
-        </div>
+    <div className="ab-ins">
+      <h2 className="ab-h">When it runs</h2>
+      <p className="ab-lead">Run it by hand whenever it is needed, or let it run on its own on a day and time you pick.</p>
 
-        {spec.trigger.type === "schedule" && (
-          <div className="sched-armed-toggle-wrap" style={{ marginTop: 4 }}>
-            <label className="sched-toggle-label" title="Enable or pause automated unattended executions">
-              <span style={{ fontSize: 13, fontWeight: 600, color: armed ? "#15803d" : "#64748b" }}>
-                {armed ? "● Schedule Armed" : "○ Schedule Paused"}
-              </span>
-              <input
-                type="checkbox"
-                checked={armed}
-                onChange={(e) => handleToggleArmed(e.target.checked)}
-              />
-              <span className="sched-slider" />
-            </label>
-          </div>
-        )}
-      </div>
-
-      {testRunMsg && (
-        <div className={testRunMsg.kind === "ok" ? "ok-note" : "error"} style={{ marginBottom: 16 }}>
-          {testRunMsg.text}
-        </div>
-      )}
-
-      {/* Primary Trigger Type Selection */}
-      <div className="radios">
-        {[
-          { id: "manual", label: "When I ask (On Demand)", note: "Manual runs from Canvas, Playground, or REST API" },
-          { id: "schedule", label: "On a schedule (Recurring Cron)", note: "Unattended execution on a calendar cadence" },
-          { id: "event", label: "When a condition is met (Event)", note: "Watches for webhooks or external metric thresholds" },
-        ].map((o) => (
-          <button
-            key={o.id}
-            type="button"
-            className={`radio ${spec.trigger.type === o.id ? "on" : ""}`}
-            onClick={() => set({ trigger: { ...spec.trigger, type: o.id as any } })}
-          >
-            <div className="tool-label">{o.label}</div>
-            <div className="sub-line">{o.note}</div>
+      <section className="ab-sec">
+        <div className="ab-choices" style={{ marginBottom: type === "schedule" ? 18 : 0 }}>
+          <button type="button" className={`ab-choice ${type === "manual" ? "on" : ""}`} onClick={() => setTrigger({ type: "manual" })}>
+            <span className="ic"><RunIcon /></span>
+            <span>
+              <b>On demand</b>
+              <span>Someone clicks Run, or another system calls it.</span>
+            </span>
           </button>
-        ))}
-      </div>
-
-      {/* Mode 1: Manual / On-Demand Execution Information */}
-      {spec.trigger.type === "manual" && (
-        <div
-          style={{
-            marginTop: 18,
-            padding: "16px 20px",
-            background: "rgba(0, 51, 141, 0.04)",
-            border: "1px solid rgba(0, 51, 141, 0.12)",
-            borderRadius: 8,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 18 }}>🖱️</span>
-            <span style={{ fontWeight: 600, color: "var(--ink, #00338d)" }}>On-Demand & Interactive Execution</span>
-          </div>
-          <p style={{ margin: "0 0 12px", fontSize: 13, color: "var(--muted, #516a92)", lineHeight: 1.5 }}>
-            This agent runs interactively whenever you click <strong>Run</strong> in the Studio, ask questions in the <strong>Live Playground</strong>, operate inside the <strong>Canvas Viewer</strong>, or invoke it via REST API.
-          </p>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#091a38", padding: "10px 14px", borderRadius: 6 }}>
-            <code className="mono" style={{ fontSize: 12, color: "#94bce3" }}>
-              POST /api/v1/agents/{agentId}/run
-            </code>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ fontSize: 12, padding: "4px 8px", color: "#fff" }}
-              onClick={handleCopyCurl}
-            >
-              {copiedCurl ? "✓ Copied Curl" : "Copy cURL"}
-            </button>
-          </div>
+          <button
+            type="button"
+            className={`ab-choice ${type === "schedule" ? "on" : ""}`}
+            onClick={() => setTrigger({ type: "schedule", schedule: parsed ? text : toSentence(DEFAULT_PICK) })}
+          >
+            <span className="ic"><ClockIcon /></span>
+            <span>
+              <b>On a schedule</b>
+              <span>Runs by itself on the day and time you pick.</span>
+            </span>
+          </button>
         </div>
-      )}
 
-      {/* Mode 2: Full Merged Cron Schedule Dashboard */}
-      {spec.trigger.type === "schedule" && (
-        <div style={{ marginTop: 18 }}>
-          {/* Countdown & Next Run Card */}
-          <div className={`sched-countdown-card ${armed ? "active" : "paused"}`}>
-            <div className="sched-countdown-icon">⏰</div>
-            <div className="sched-countdown-info">
-              <div className="sched-countdown-headline">
-                {armed
-                  ? nextRunAt
-                    ? `Next scheduled run: ${new Date(nextRunAt).toLocaleString([], {
-                        weekday: "long",
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })} (${timezone})`
-                    : "Schedule active · calculating next cycle"
-                  : "Schedule is currently paused. Toggle 'Schedule Armed' above to resume automatic runs."}
+        {type === "schedule" && (
+          <>
+            {unreadable && (
+              <div className="ab-hint warn">
+                <AlertIcon />
+                <span className="grow">The current schedule “{text}” cannot be run. Pick a day and time below to replace it.</span>
               </div>
-              <div className="sched-countdown-sub">
-                {description || currentSchedule || "Recurring schedule"} · Published version executes unattended
-              </div>
+            )}
+
+            <div className="ab-sched">
+              <label className="ab-field">
+                <span className="ab-label">Repeats</span>
+                <select className="input" value={current.repeat} onChange={(e) => choose({ repeat: e.target.value as Repeat })}>
+                  <option value="daily">Every day</option>
+                  <option value="weekdays">Every working day (Mon–Fri)</option>
+                  <option value="weekly">Every week</option>
+                  <option value="monthly">Every month</option>
+                  {current.repeat === "quarterly" && <option value="quarterly">Every quarter</option>}
+                </select>
+              </label>
+
+              {current.repeat === "weekly" && (
+                <div className="ab-field">
+                  <span className="ab-label">Day</span>
+                  <div className="ab-days" role="radiogroup" aria-label="Day of the week">
+                    {WEEKDAYS.map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        role="radio"
+                        aria-checked={current.weekday === d}
+                        className={current.weekday === d ? "on" : ""}
+                        onClick={() => choose({ weekday: d })}
+                      >
+                        {DAY_SHORT[d]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {current.repeat === "monthly" && (
+                <label className="ab-field">
+                  <span className="ab-label">Day of the month</span>
+                  <select className="input" value={current.monthDay} onChange={(e) => choose({ monthDay: e.target.value })}>
+                    <option value="w1">First working day</option>
+                    {/* An existing "second working day" and the like stays selectable. */}
+                    {["w2", "w3", "w4", "w5"].includes(current.monthDay) && (
+                      <option value={current.monthDay}>{`${ORD_WORD[Number(current.monthDay.slice(1))][0].toUpperCase()}${ORD_WORD[Number(current.monthDay.slice(1))].slice(1)} working day`}</option>
+                    )}
+                    <option value="wl">Last working day</option>
+                    <optgroup label="A date">
+                      {Array.from({ length: 28 }, (_, i) => i + 1).map((n) => (
+                        <option key={n} value={String(n)}>{`${n}${suffix(n)}`}</option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </label>
+              )}
+
+              <label className="ab-field">
+                <span className="ab-label">Time</span>
+                <span className="ab-time">
+                  <input
+                    type="time"
+                    value={current.time}
+                    onChange={(e) => e.target.value && choose({ time: e.target.value })}
+                    aria-label="Time of day"
+                  />
+                </span>
+              </label>
             </div>
 
-            <button
-              type="button"
-              className="btn btn-primary"
-              style={{ whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6 }}
-              onClick={handleRunNow}
-              disabled={runningNow}
-              title="Execute a test run with the standing input immediately"
-            >
-              <span>{runningNow ? "Launching…" : "⚡ Test Run Now"}</span>
-            </button>
-          </div>
+            <div className={`ab-next ${plan.next ? "" : "paused"}`} style={{ marginTop: 14, marginBottom: 0 }}>
+              <span>
+                <strong>
+                  <CheckIcon size={13} /> Runs {describe(current)} ({timezone}).
+                </strong>
+                {isLive && nextRunAt
+                  ? `Next run: ${formatWhen(nextRunAt, timezone)}. Changes here take effect when you publish them.`
+                  : plan.next
+                    ? `Once published, the first run would be ${formatWhen(plan.next, timezone)}.`
+                    : ""}
+              </span>
+            </div>
+            {!isLive && (
+              <p className="sub-line" style={{ margin: "8px 0 0" }}>
+                A schedule only starts once the agent is published. If a scheduled run fails, the workspace owner and approvers are emailed.
+              </p>
+            )}
 
-          {/* Cadence Presets */}
-          <div style={{ marginBottom: 14 }}>
-            <span className="eyebrow" style={{ display: "block", marginBottom: 8 }}>Cadence Presets</span>
-            <div className="sched-presets-row">
-              {SCHEDULE_PRESETS.map((p) => {
-                const isActive = currentSchedule.toLowerCase().trim() === p.val.toLowerCase().trim();
-                return (
-                  <button
-                    key={p.val}
-                    type="button"
-                    className={`sched-preset-btn ${isActive ? "active" : ""}`}
-                    onClick={() => set({ trigger: { ...spec.trigger, schedule: p.val } })}
-                  >
-                    <div style={{ fontWeight: 600 }}>{p.label}</div>
-                    <div className="mono" style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{p.cron}</div>
+            {/* Agents without run inputs rarely need a note, so it waits behind a link. */}
+            {inputs.length === 0 &&
+              (noteOpen ? (
+                <label className="ab-field" style={{ marginTop: 14 }}>
+                  <span className="ab-label">Note for each scheduled run <em>— optional</em></span>
+                  <textarea
+                    className="textarea"
+                    rows={2}
+                    autoFocus={!spec.trigger.input}
+                    placeholder="e.g. Cover the week that has just ended."
+                    value={spec.trigger.input || ""}
+                    onChange={(e) => setTrigger({ input: e.target.value })}
+                  />
+                </label>
+              ) : (
+                <button type="button" className="ab-tl-addbtn" style={{ marginTop: 8, paddingLeft: 0 }} onClick={() => setNoteOpen(true)}>
+                  + Add a note for each scheduled run
+                </button>
+              ))}
+          </>
+        )}
+
+        {type === "manual" &&
+          (agentId ? (
+            <div className="ab-api">
+              <div className="ab-api-head">
+                <span className="ab-sec-ic"><PlugIcon size={16} /></span>
+                <div className="grow">
+                  <b>Call it from another system</b>
+                  <span>
+                    Start this agent with one HTTPS request, made while signed in to this workspace. It runs the live version, or the
+                    draft until one is published.
+                  </span>
+                </div>
+                <a className="ab-link" href={`/api/v1/agents/${agentId}/invoke`} target="_blank" rel="noreferrer">API description ↗</a>
+              </div>
+              <div className="ab-api-url">
+                <span className="ab-method">POST</span>
+                <code title={endpoint}>{endpoint}</code>
+                <button type="button" className="ab-copy" onClick={() => copy("url", endpoint)}>
+                  {copied === "url" ? <><CheckIcon size={13} /> Copied</> : <><CopyIcon size={13} /> Copy</>}
+                </button>
+              </div>
+              <details className="ab-api-ex">
+                <summary>Example request body</summary>
+                <div className="ab-api-pre">
+                  <pre>{exampleBody}</pre>
+                  <button type="button" className="ab-copy" onClick={() => copy("body", exampleBody)}>
+                    {copied === "body" ? <><CheckIcon size={13} /> Copied</> : <><CopyIcon size={13} /> Copy</>}
                   </button>
+                </div>
+                <p className="sub-line" style={{ margin: "8px 0 0" }}>
+                  <code>inputs</code> takes the same fields as the run form; <code>dryRun: true</code> rehearses without carrying out
+                  approval-gated actions.
+                </p>
+              </details>
+            </div>
+          ) : (
+            <p className="sub-line" style={{ margin: "14px 0 0" }}>Once the agent is saved, other systems can also start it through its API address.</p>
+          ))}
+      </section>
+
+      {/* Only agents with a run form need values for runs nobody attends. */}
+      {type === "schedule" && inputs.length > 0 && (
+        <section className="ab-sec">
+          <header className="ab-sec-head">
+            <span className="ab-sec-ic"><FormIcon size={17} /></span>
+            <div className="grow">
+              <h3>Values for scheduled runs</h3>
+              <p>Nobody is there to fill in the run form, so set what each scheduled run should use.</p>
+            </div>
+            {inputs.length > 0 && (
+              <span className={`ab-pill ${missing.length || unattended ? "warn" : ""}`}>
+                {missing.length
+                  ? `${missing.length} required ${missing.length === 1 ? "value" : "values"} missing`
+                  : empty.length && !hasInstruction
+                    ? `${inputs.length - empty.length} of ${inputs.length} filled`
+                    : "All set"}
+              </span>
+            )}
+          </header>
+
+          {inputs.length > 0 && (
+            <div className="ab-standing">
+              {inputs.map((i) => {
+                const v = standing[i.key] ?? "";
+                return (
+                  <label key={i.key} className="ab-field">
+                    <span className="ab-label">
+                      {i.label || i.key}
+                      {i.required && <em> — required</em>}
+                    </span>
+                    {i.type === "choice" ? (
+                      <select className="input" value={v} onChange={(e) => setStanding(i.key, e.target.value)}>
+                        <option value="">Choose…</option>
+                        {(i.options ?? []).map((o) => (
+                          <option key={o} value={o}>{o}</option>
+                        ))}
+                      </select>
+                    ) : i.type === "date" ? (
+                      <input className="input" type="date" value={v} onChange={(e) => setStanding(i.key, e.target.value)} />
+                    ) : i.type === "number" ? (
+                      <input className="input" type="number" value={v} placeholder={i.hint} onChange={(e) => setStanding(i.key, e.target.value)} />
+                    ) : i.type === "longtext" ? (
+                      <textarea className="textarea" rows={2} value={v} placeholder={i.hint} onChange={(e) => setStanding(i.key, e.target.value)} />
+                    ) : i.type === "file" ? (
+                      docs && docs.length > 0 ? (
+                        <select className="input" value={v} onChange={(e) => setStanding(i.key, e.target.value)}>
+                          <option value="">Choose an uploaded document…</option>
+                          {v && !docs.some((d) => d.name === v) && <option value={v}>{v}</option>}
+                          {docs.map((d) => (
+                            <option key={d.id} value={d.name}>{d.name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input className="input" value={v} placeholder="The name of an uploaded document" onChange={(e) => setStanding(i.key, e.target.value)} />
+                      )
+                    ) : (
+                      <input className="input" value={v} placeholder={i.hint} onChange={(e) => setStanding(i.key, e.target.value)} />
+                    )}
+                  </label>
                 );
               })}
             </div>
-          </div>
+          )}
 
-          {/* Custom Schedule Expression Input */}
-          <label className="field mt">
-            <span className="eyebrow">Schedule Expression / Cron Cadence</span>
-            <input
-              className="input mono"
-              placeholder="e.g. weekdays at 8:00am, every monday at 9:00am, 0 8 * * 1-5"
-              value={spec.trigger.schedule || ""}
-              onChange={(e) => set({ trigger: { ...spec.trigger, schedule: e.target.value } })}
-            />
-            <span className="help" style={{ marginTop: 4 }}>
-              Supports plain English schedules (<em>"weekdays at 8:00am"</em>) or standard 5-part cron syntax (<em>"0 8 * * 1-5"</em>). Executes in workspace timezone: <strong>{timezone}</strong>.
-            </span>
-          </label>
-
-          {/* Standing Directive / Unattended Input */}
-          <label className="field mt">
-            <span className="eyebrow">Standing Directive (Unattended Run Prompt)</span>
-            <textarea
-              className="textarea"
-              rows={3}
-              placeholder="What the agent should do each time it executes on its own schedule..."
-              value={spec.trigger.input || ""}
-              onChange={(e) => set({ trigger: { ...spec.trigger, input: e.target.value } })}
-            />
-            <span className="help" style={{ marginTop: 6 }}>
-              {spec.inputs.length > 0 ? (
-                <span style={{ color: "var(--amber, #d97706)" }}>
-                  ⚠️ This agent defines {spec.inputs.length} input parameter{spec.inputs.length === 1 ? "" : "s"} ({spec.inputs.map((i) => i.label).join(", ")}). Because nobody is at the keyboard during scheduled runs, provide the default values or instructions here.
-                </span>
-              ) : (
-                "Since nobody is at the keyboard during scheduled executions, this standing prompt is automatically passed as the run goal."
-              )}
-            </span>
-          </label>
-
-          {/* Recent Scheduled Runs History */}
-          <div style={{ marginTop: 22 }}>
-            <h4 style={{ margin: "0 0 10px", fontSize: 14, fontWeight: 600, color: "var(--ink, #00338d)" }}>
-              Scheduled Execution History {pastRuns.length > 0 ? `(${pastRuns.length})` : ""}
-            </h4>
-
-            {loadingSchedule ? (
-              <div className="sched-loading">Loading execution history…</div>
-            ) : pastRuns.length === 0 ? (
-              <div
-                style={{
-                  padding: "16px",
-                  background: "rgba(0, 0, 0, 0.02)",
-                  border: "1px dashed rgba(0, 0, 0, 0.12)",
-                  borderRadius: 6,
-                  textAlign: "center",
-                  fontSize: 13,
-                  color: "#64748b",
-                }}
-              >
-                No scheduled runs have executed yet. Click <strong>"⚡ Test Run Now"</strong> above to test immediately.
-              </div>
-            ) : (
-              <div className="webhook-table-wrap">
-                <table className="webhook-table">
-                  <thead>
-                    <tr>
-                      <th>Status</th>
-                      <th>Run ID</th>
-                      <th>Triggered At</th>
-                      <th style={{ textAlign: "right" }}>Cost</th>
-                      <th style={{ textAlign: "right" }}>Trace</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pastRuns.map((r) => (
-                      <tr key={r.id}>
-                        <td>
-                          <span
-                            className="webhook-status-badge"
-                            style={{
-                              background: r.status === "completed" ? "rgba(34, 197, 94, 0.12)" : "rgba(245, 158, 11, 0.12)",
-                              color: r.status === "completed" ? "#15803d" : "#b45309",
-                            }}
-                          >
-                            {r.status}
-                          </span>
-                        </td>
-                        <td className="mono" style={{ fontSize: 12 }}>
-                          {r.id.slice(0, 8)}…
-                        </td>
-                        <td style={{ fontSize: 12, color: "#64748b" }}>
-                          {new Date(r.started_at).toLocaleString([], {
-                            month: "short",
-                            day: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </td>
-                        <td style={{ textAlign: "right", fontSize: 12 }} className="mono">
-                          {r.cost_cents ? `$${(r.cost_cents / 100).toFixed(3)}` : "—"}
-                        </td>
-                        <td style={{ textAlign: "right" }}>
-                          <Link href={`/runs/${r.id}`} className="btn btn-ghost" style={{ fontSize: 11, padding: "3px 8px" }}>
-                            View Trace ↗
-                          </Link>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Mode 3: Event & Webhook Trigger */}
-      {spec.trigger.type === "event" && (
-        <div style={{ marginTop: 18 }}>
-          <label className="field">
-            <span className="eyebrow">Triggering Condition</span>
-            <input
-              className="input"
-              placeholder="e.g. Open tickets older than 7 days exceed 20, or inbound webhook event payload"
-              value={spec.trigger.condition || ""}
-              onChange={(e) => set({ trigger: { ...spec.trigger, condition: e.target.value } })}
-            />
-            <span className="help" style={{ marginTop: 4 }}>
-              The operational threshold or condition that causes an automated run to be launched.
-            </span>
-          </label>
-
-          <div
-            style={{
-              marginTop: 12,
-              padding: "14px 18px",
-              background: "rgba(0, 51, 141, 0.04)",
-              border: "1px solid rgba(0, 51, 141, 0.1)",
-              borderRadius: 8,
-              fontSize: 12.5,
-              color: "var(--muted, #516a92)",
-            }}
-          >
-            💡 Inbound webhooks from GitHub, Slack, and Stripe can be configured under <strong>Connections</strong> to emit events that trigger this agent automatically.
-          </div>
-        </div>
-      )}
-
-      {/* Execution Guardrails & Tool Call Budgets */}
-      <div style={{ marginTop: 28, paddingTop: 18, borderTop: "1px solid rgba(0, 51, 141, 0.1)" }}>
-        <h3 style={{ fontSize: 15, fontWeight: 650, color: "var(--ink, #00338d)", marginBottom: 12 }}>
-          Execution Guardrails & Safety Limits
-        </h3>
-
-        <div className="grid2">
-          <label className="field">
-            <span className="eyebrow">Tool call budget per run</span>
-            <input
-              className="input mono"
-              type="number"
-              min={2}
-              max={40}
-              value={spec.guardrails.maxSteps}
-              onChange={(e) => set({ guardrails: { ...spec.guardrails, maxSteps: Number(e.target.value) } })}
-            />
-            <span className="help" style={{ marginTop: 4 }}>
-              Maximum autonomous tool steps permitted before forcing a resolution or handoff.
-            </span>
-          </label>
-
-          <label className="field">
-            <span className="eyebrow">Anything it must never do</span>
-            <input
-              className="input"
-              placeholder="e.g. Never contact a customer directly, Never issue refunds over $500"
-              value={spec.guardrails.extra}
-              onChange={(e) => set({ guardrails: { ...spec.guardrails, extra: e.target.value } })}
-            />
-            <span className="help" style={{ marginTop: 4 }}>
-              Hard constraints strictly injected into the system prompt.
-            </span>
-          </label>
-        </div>
-
-        <div className="stack mt">
-          {[
-            ["requireCitations", "Cite the source of every figure, record, or claim"],
-            ["stayInScope", "Refuse work outside the instructions and brief above"],
-            ["escalateOnAmbiguity", "Say what is missing rather than guessing on incomplete inputs"],
-          ].map(([k, label]) => (
-            <label key={k} className="row" style={{ cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={(spec.guardrails as any)[k]}
-                onChange={(e) =>
-                  set({
-                    guardrails: { ...spec.guardrails, [k]: e.target.checked },
-                  })
-                }
+          {noteOpen ? (
+            <label className="ab-field" style={{ marginTop: 14 }}>
+              <span className="ab-label">Note for each scheduled run <em>— optional</em></span>
+              <textarea
+                className="textarea"
+                rows={2}
+                autoFocus={!spec.trigger.input}
+                placeholder="e.g. Cover the week that has just ended."
+                value={spec.trigger.input || ""}
+                onChange={(e) => setTrigger({ input: e.target.value })}
               />
-              <span>{label}</span>
             </label>
-          ))}
-        </div>
-
-        <div style={{ marginTop: 24 }}>
-          <GuardrailsConfigCard
-            spec={spec}
-            onChange={(patch) => set({ guardrails: { ...spec.guardrails, ...patch } })}
-          />
-        </div>
-      </div>
+          ) : (
+            <button type="button" className="ab-tl-addbtn" style={{ marginTop: 8, paddingLeft: 0 }} onClick={() => setNoteOpen(true)}>
+              + Add a note for each scheduled run
+            </button>
+          )}
+          {(missing.length > 0 || unattended) && (
+            <div className="ab-hint warn" style={{ marginTop: 10, marginBottom: 0 }}>
+              <AlertIcon />
+              <span className="grow">
+                {missing.length
+                  ? `Fill in ${missing.map((i) => i.label || i.key).join(", ")}. Without ${missing.length === 1 ? "it" : "them"}, each scheduled run is told the value was not supplied.`
+                  : "Some fields have no value and there is no note, so scheduled runs would work without them. Fill them in, or add a note."}
+              </span>
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAppById } from "@/lib/apps";
+import { assertSafeUrl } from "@/lib/ssrf";
+
+// Headers that would let a request through to a cloud metadata server. Never forwarded.
+const METADATA_HEADERS = new Set(["metadata-flavor", "x-google-metadata-request", "metadata"]);
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,6 +36,17 @@ async function proxyHandler(
 
   const targetUrl = new URL(targetPath, upstreamBase.origin);
 
+  // An app URL must not reach the metadata server, loopback or a private network: on a
+  // cloud host that would expose the service account's credentials. Local development may
+  // embed apps on localhost, as the A2A client allows.
+  if (process.env.NODE_ENV === "production") {
+    try {
+      await assertSafeUrl(targetUrl.toString());
+    } catch (err: any) {
+      return NextResponse.json({ error: `Blocked upstream: ${err.message}` }, { status: 403 });
+    }
+  }
+
   // Forward query string parameters
   const reqUrl = new URL(req.url);
   reqUrl.searchParams.forEach((val, key) => {
@@ -46,7 +61,8 @@ async function proxyHandler(
       lowerKey === "host" ||
       lowerKey === "connection" ||
       lowerKey === "content-length" ||
-      lowerKey === "transfer-encoding"
+      lowerKey === "transfer-encoding" ||
+      METADATA_HEADERS.has(lowerKey)
     ) {
       continue;
     }

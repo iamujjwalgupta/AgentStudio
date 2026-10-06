@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { EmbeddedApp } from "@/lib/apps";
+import { APP_ICONS, AppGlyph, AppTile, CATEGORIES, ICON_LABEL, MODES, SANDBOX_DEFAULT, categoryOf, hostOf, modeOf, type EmbedMode } from "./apps/AppVisuals";
+import { CrossIcon } from "./agent-ui";
 
 interface AddAppModalProps {
   isOpen: boolean;
@@ -10,533 +12,216 @@ interface AddAppModalProps {
   editingApp?: EmbeddedApp | null;
 }
 
-const CATEGORIES = [
-  { id: "agent-ui", label: "Agent UI & Playground" },
-  { id: "dashboard", label: "Dashboard & Observability" },
-  { id: "dev-tools", label: "Developer Tools & APIs" },
-  { id: "analytics", label: "Data & Analytics" },
-  { id: "docs", label: "Docs & Knowledge" },
-  { id: "custom", label: "Custom Application" },
-];
+/** A readable name from an address: "cashflow-intelligence-1333.run.app" → "Cashflow Intelligence". */
+function nameFromUrl(url: string) {
+  const host = hostOf(url).replace(/^www\./, "");
+  const first = host.split(".")[0] || "";
+  return first
+    .split(/[-_]/)
+    // Drop numbers and generated suffixes ("133379243863", "lwpgyh3rxa").
+    .filter((w) => w && !/\d/.test(w))
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(" ");
+}
 
-const ICONS = [
-  { id: "globe", label: "Globe", symbol: "🌐" },
-  { id: "bot", label: "Agent / Bot", symbol: "🤖" },
-  { id: "sparkles", label: "AI / Sparkles", symbol: "✨" },
-  { id: "chart", label: "Metrics / Chart", symbol: "📊" },
-  { id: "terminal", label: "Terminal / API", symbol: "⚡" },
-  { id: "database", label: "Data Store", symbol: "🗄️" },
-  { id: "layout", label: "Portal / UI", symbol: "🖥️" },
-  { id: "shield", label: "Security", symbol: "🛡️" },
-];
-
-export default function AddAppModal({
-  isOpen,
-  onClose,
-  onCreated,
-  editingApp,
-}: AddAppModalProps) {
+export default function AddAppModal({ isOpen, onClose, onCreated, editingApp }: AddAppModalProps) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("agent-ui");
   const [icon, setIcon] = useState("globe");
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [permissions, setPermissions] = useState("proxy");
+  const [mode, setMode] = useState<EmbedMode>("proxy");
+  const [flags, setFlags] = useState(SANDBOX_DEFAULT);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const nameTouched = useRef(false);
 
   useEffect(() => {
+    if (!isOpen) return;
     if (editingApp) {
       setName(editingApp.name);
       setUrl(editingApp.url);
       setDescription(editingApp.description || "");
-      setCategory(editingApp.category || "custom");
+      setCategory(categoryOf(editingApp.category || "custom").id);
       setIcon(editingApp.icon || "globe");
-      setPermissions(
-        editingApp.permissions !== undefined && editingApp.permissions !== ""
-          ? editingApp.permissions
-          : "proxy"
-      );
+      const m = modeOf(editingApp.permissions);
+      setMode(m);
+      setFlags(m === "sandboxed" ? editingApp.permissions : SANDBOX_DEFAULT);
+      nameTouched.current = true;
     } else {
       setName("");
       setUrl("");
       setDescription("");
       setCategory("agent-ui");
       setIcon("globe");
-      setPermissions("proxy");
+      setMode("proxy");
+      setFlags(SANDBOX_DEFAULT);
+      nameTouched.current = false;
     }
     setError("");
   }, [editingApp, isOpen]);
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen) {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && isOpen && !loading && onClose();
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [isOpen, loading, onClose]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) {
-      setError("Please give the application a name.");
-      return;
+  const normalised = url.trim() && !/^https?:\/\//i.test(url.trim()) ? `https://${url.trim()}` : url.trim();
+  const validUrl = (() => {
+    try {
+      const u = new URL(normalised);
+      return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+      return false;
     }
-    if (!url.trim()) {
-      setError("Please specify a URL to embed.");
-      return;
-    }
+  })();
 
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!validUrl) return setError("Enter the app's web address, for example https://reports.example.com.");
+    if (!name.trim()) return setError("Give the app a name.");
     setLoading(true);
     setError("");
-
+    const body = {
+      name: name.trim(),
+      url: normalised,
+      description: description.trim(),
+      category,
+      icon,
+      permissions: mode === "proxy" ? "proxy" : mode === "direct" ? "unrestricted" : flags.trim() || SANDBOX_DEFAULT,
+    };
     try {
-      if (editingApp) {
-        const res = await fetch(`/api/apps/${editingApp.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name,
-            url,
-            description,
-            category,
-            icon,
-            permissions,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to update application");
-        onCreated(data.app);
-      } else {
-        const res = await fetch("/api/apps", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name,
-            url,
-            description,
-            category,
-            icon,
-            permissions,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to create application");
-        onCreated(data.app);
-      }
+      const res = await fetch(editingApp ? `/api/apps/${editingApp.id}` : "/api/apps", {
+        method: editingApp ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "The app could not be saved.");
+      onCreated(data.app);
       onClose();
     } catch (err: any) {
       setError(err.message || "Something went wrong.");
     } finally {
       setLoading(false);
     }
-  };
+  }
+
+  const cat = categoryOf(category);
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: "rgba(3, 10, 24, 0.75)",
-        backdropFilter: "blur(4px)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1000,
-        padding: "20px",
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        style={{
-          background: "#091a38",
-          border: "1px solid rgba(148, 188, 227, 0.25)",
-          borderRadius: "12px",
-          width: "100%",
-          maxWidth: "540px",
-          boxShadow: "0 20px 50px rgba(0, 0, 0, 0.5)",
-          overflow: "hidden",
-          animation: "modalFadeIn 0.15s ease-out",
-        }}
-      >
-        {/* Modal Header */}
-        <div
-          style={{
-            padding: "18px 24px",
-            borderBottom: "1px solid rgba(148, 188, 227, 0.15)",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            background: "#071329",
-          }}
-        >
+    <div className="modal-back" onMouseDown={() => !loading && onClose()}>
+      <form className="ap-modal" role="dialog" aria-modal="true" aria-labelledby="ap-modal-title" onMouseDown={(e) => e.stopPropagation()} onSubmit={submit}>
+        <div className="ap-modal-head">
           <div>
-            <div style={{ fontSize: "17px", fontWeight: 700, color: "#fff" }}>
-              {editingApp ? "Edit Web Application" : "Embed Web Application"}
-            </div>
-            <div style={{ fontSize: "12px", color: "var(--sky-2)", marginTop: "2px" }}>
-              Display external tools, agent dashboards, or custom web apps inside Agent Studio canvas.
-            </div>
+            <div className="eyebrow">{editingApp ? "Edit app" : "Add app"}</div>
+            <h2 id="ap-modal-title">{editingApp ? editingApp.name : "Open a web app inside Agent Studio"}</h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: "var(--sky-3)",
-              cursor: "pointer",
-              fontSize: "18px",
-              padding: "4px 8px",
-              borderRadius: "4px",
-            }}
-          >
-            ✕
-          </button>
+          <button type="button" className="ap-close" onClick={onClose} aria-label="Close"><CrossIcon size={13} /></button>
         </div>
 
-        {/* Modal Form */}
-        <form onSubmit={handleSubmit} style={{ padding: "22px 24px" }}>
-          {error && (
-            <div
-              style={{
-                marginBottom: "16px",
-                padding: "10px 14px",
-                background: "rgba(239, 68, 68, 0.12)",
-                border: "1px solid rgba(239, 68, 68, 0.3)",
-                borderRadius: "6px",
-                color: "#fca5a5",
-                fontSize: "12.5px",
-              }}
-            >
-              {error}
-            </div>
-          )}
-
-          {/* App Name */}
-          <div style={{ marginBottom: "16px" }}>
-            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#fff", marginBottom: "6px" }}>
-              Application Name *
-            </label>
+        <div className="ap-modal-body">
+          <label className="ap-field">
+            <span className="ap-label-row">
+              <span className="ap-label">Web address</span>
+              {validUrl && <a href={normalised} target="_blank" rel="noreferrer" className="ap-test">Open it in a new tab ↗</a>}
+            </span>
             <input
-              type="text"
-              required
-              placeholder="e.g. LangGraph Inspector, Customer Portal, Retool Hub"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              style={{
-                width: "100%",
-                boxSizing: "border-box",
-                padding: "9px 12px",
-                fontSize: "13.5px",
-                background: "rgba(4, 14, 34, 0.7)",
-                border: "1px solid rgba(148, 188, 227, 0.25)",
-                borderRadius: "6px",
-                color: "#fff",
-                outline: "none",
-              }}
-            />
-          </div>
-
-          {/* Web App URL */}
-          <div style={{ marginBottom: "16px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-              <label style={{ fontSize: "12.5px", fontWeight: 600, color: "#fff" }}>
-                Web Application URL *
-              </label>
-              {url && (
-                <a
-                  href={url.startsWith("http") ? url : `https://${url}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ fontSize: "11px", color: "#38bdf8", textDecoration: "none" }}
-                >
-                  Test in New Tab ↗
-                </a>
-              )}
-            </div>
-            <input
-              type="text"
-              required
-              placeholder="https://... or http://localhost:8080"
+              className="input mono"
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              style={{
-                width: "100%",
-                boxSizing: "border-box",
-                padding: "9px 12px",
-                fontSize: "13px",
-                fontFamily: "var(--mono)",
-                background: "rgba(4, 14, 34, 0.7)",
-                border: "1px solid rgba(148, 188, 227, 0.25)",
-                borderRadius: "6px",
-                color: "#fff",
-                outline: "none",
+              autoFocus={!editingApp}
+              placeholder="https://reports.example.com  or  http://localhost:8080"
+              onChange={(e) => {
+                setUrl(e.target.value);
+                if (!nameTouched.current) setName(nameFromUrl(e.target.value));
               }}
+              onBlur={() => url.trim() && setUrl(normalised)}
             />
-          </div>
+          </label>
 
-          {/* Category & Icon Row */}
-          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "14px", marginBottom: "16px" }}>
-            <div>
-              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#fff", marginBottom: "6px" }}>
-                Category
-              </label>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                style={{
-                  width: "100%",
-                  boxSizing: "border-box",
-                  padding: "9px 12px",
-                  fontSize: "13px",
-                  background: "rgba(4, 14, 34, 0.7)",
-                  border: "1px solid rgba(148, 188, 227, 0.25)",
-                  borderRadius: "6px",
-                  color: "#fff",
-                  outline: "none",
-                  cursor: "pointer",
-                }}
-              >
-                {CATEGORIES.map((c) => (
-                  <option key={c.id} value={c.id} style={{ background: "#091a38", color: "#fff" }}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#fff", marginBottom: "6px" }}>
-                Tile Icon
-              </label>
-              <select
-                value={icon}
-                onChange={(e) => setIcon(e.target.value)}
-                style={{
-                  width: "100%",
-                  boxSizing: "border-box",
-                  padding: "9px 12px",
-                  fontSize: "13px",
-                  background: "rgba(4, 14, 34, 0.7)",
-                  border: "1px solid rgba(148, 188, 227, 0.25)",
-                  borderRadius: "6px",
-                  color: "#fff",
-                  outline: "none",
-                  cursor: "pointer",
-                }}
-              >
-                {ICONS.map((ic) => (
-                  <option key={ic.id} value={ic.id} style={{ background: "#091a38", color: "#fff" }}>
-                    {ic.symbol} {ic.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Description */}
-          <div style={{ marginBottom: "16px" }}>
-            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#fff", marginBottom: "6px" }}>
-              Description
+          <div className="ap-two">
+            <label className="ap-field">
+              <span className="ap-label">Name</span>
+              <input className="input" value={name} maxLength={80} placeholder="e.g. Cashflow Intelligence" onChange={(e) => { nameTouched.current = true; setName(e.target.value); }} />
             </label>
-            <textarea
-              rows={2}
-              placeholder="What does this application do? (e.g. Visual state graph inspector for enterprise workflows)"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              style={{
-                width: "100%",
-                boxSizing: "border-box",
-                padding: "8px 12px",
-                fontSize: "13px",
-                background: "rgba(4, 14, 34, 0.7)",
-                border: "1px solid rgba(148, 188, 227, 0.25)",
-                borderRadius: "6px",
-                color: "#fff",
-                outline: "none",
-                resize: "vertical",
-              }}
-            />
-          </div>
-
-          {/* Embedding & Auth Mode */}
-          <div style={{ marginBottom: "18px" }}>
-            <label style={{ display: "block", fontSize: "12.5px", fontWeight: 600, color: "#fff", marginBottom: "6px" }}>
-              Embedding &amp; Authentication Mode
+            <label className="ap-field">
+              <span className="ap-label">Category</span>
+              <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
+                {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
             </label>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
-              {/* Proxy Mode */}
-              <button
-                type="button"
-                onClick={() => setPermissions("proxy")}
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: "8px",
-                  border: permissions === "proxy" ? "1px solid #38bdf8" : "1px solid rgba(148, 188, 227, 0.2)",
-                  background: permissions === "proxy" ? "rgba(56, 189, 248, 0.12)" : "rgba(4, 14, 34, 0.6)",
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 700, color: permissions === "proxy" ? "#38bdf8" : "#fff" }}>
-                  <span>🌐 Proxy Mode</span>
-                  {permissions === "proxy" && <span style={{ fontSize: "10px", color: "#38bdf8" }}>✓ Active</span>}
-                </div>
-                <div style={{ fontSize: "11px", color: "var(--sky-3)", marginTop: "4px", lineHeight: "1.4" }}>
-                  Recommended for apps with login screens &amp; cookies. Bypasses cross-origin restrictions.
-                </div>
-              </button>
+          </div>
 
-              {/* Direct Mode */}
-              <button
-                type="button"
-                onClick={() => setPermissions("unrestricted")}
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: "8px",
-                  border: permissions === "unrestricted" ? "1px solid #22c55e" : "1px solid rgba(148, 188, 227, 0.2)",
-                  background: permissions === "unrestricted" ? "rgba(34, 197, 94, 0.12)" : "rgba(4, 14, 34, 0.6)",
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 700, color: permissions === "unrestricted" ? "#4ade80" : "#fff" }}>
-                  <span>🔓 Direct Mode</span>
-                  {permissions === "unrestricted" && <span style={{ fontSize: "10px", color: "#4ade80" }}>✓ Active</span>}
-                </div>
-                <div style={{ fontSize: "11px", color: "var(--sky-3)", marginTop: "4px", lineHeight: "1.4" }}>
-                  Direct URL loading with unrestricted permissions.
-                </div>
-              </button>
+          <label className="ap-field">
+            <span className="ap-label">What it&apos;s for <em>— optional, shown on its tile</em></span>
+            <textarea className="textarea" rows={2} maxLength={300} value={description} placeholder="e.g. Forecasts 13-week cash position from bank and AP/AR data." onChange={(e) => setDescription(e.target.value)} />
+          </label>
 
-              {/* Sandboxed Mode */}
-              <button
-                type="button"
-                onClick={() =>
-                  setPermissions(
-                    "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals allow-storage-access-by-user-activation allow-top-navigation-by-user-activation"
-                  )
-                }
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: "8px",
-                  border:
-                    permissions !== "proxy" && permissions !== "unrestricted"
-                      ? "1px solid #fbbf24"
-                      : "1px solid rgba(148, 188, 227, 0.2)",
-                  background:
-                    permissions !== "proxy" && permissions !== "unrestricted"
-                      ? "rgba(245, 158, 11, 0.12)"
-                      : "rgba(4, 14, 34, 0.6)",
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 700, color: permissions !== "proxy" && permissions !== "unrestricted" ? "#fbbf24" : "#fff" }}>
-                  <span>🔒 Sandboxed</span>
-                  {permissions !== "proxy" && permissions !== "unrestricted" && <span style={{ fontSize: "10px", color: "#fbbf24" }}>✓ Active</span>}
-                </div>
-                <div style={{ fontSize: "11px", color: "var(--sky-3)", marginTop: "4px", lineHeight: "1.4" }}>
-                  Strict isolated execution with explicit permission flags.
-                </div>
-              </button>
-            </div>
-
-            {/* Optional custom flags toggle */}
-            <div style={{ marginTop: "8px" }}>
-              <button
-                type="button"
-                onClick={() => setShowAdvanced(!showAdvanced)}
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  color: "var(--sky)",
-                  fontSize: "11.5px",
-                  cursor: "pointer",
-                  padding: 0,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "4px",
-                }}
-              >
-                <span>{showAdvanced ? "▾ Hide Custom Sandbox Flags" : "▸ Custom Sandbox String"}</span>
-              </button>
-              {showAdvanced && (
-                <div style={{ marginTop: "6px" }}>
-                  <input
-                    type="text"
-                    value={permissions}
-                    onChange={(e) => setPermissions(e.target.value)}
-                    placeholder="e.g. unrestricted or allow-scripts allow-same-origin ..."
-                    style={{
-                      width: "100%",
-                      boxSizing: "border-box",
-                      padding: "6px 10px",
-                      fontSize: "11px",
-                      fontFamily: "var(--mono)",
-                      background: "rgba(0,0,0,0.4)",
-                      border: "1px solid rgba(148,188,227,0.2)",
-                      borderRadius: "4px",
-                      color: "var(--sky-3)",
-                    }}
-                  />
-                </div>
-              )}
+          <div className="ap-field">
+            <span className="ap-label">Icon</span>
+            <div className="ap-icons" role="radiogroup" aria-label="Icon">
+              {APP_ICONS.map((ic) => (
+                <button
+                  key={ic}
+                  type="button"
+                  role="radio"
+                  aria-checked={icon === ic}
+                  className={`ap-icon-opt ${icon === ic ? "on" : ""}`}
+                  style={icon === ic ? { color: cat.colour, background: cat.bg, borderColor: cat.colour } : undefined}
+                  onClick={() => setIcon(ic)}
+                  title={ICON_LABEL[ic]}
+                >
+                  <AppGlyph icon={ic} size={18} />
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Modal Actions */}
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "24px" }}>
-            <button
-              type="button"
-              onClick={onClose}
-              style={{
-                padding: "8px 16px",
-                fontSize: "13px",
-                borderRadius: "6px",
-                border: "1px solid rgba(148, 188, 227, 0.2)",
-                background: "transparent",
-                color: "var(--sky-2)",
-                cursor: "pointer",
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                padding: "8px 20px",
-                fontSize: "13px",
-                fontWeight: 600,
-                borderRadius: "6px",
-                border: "none",
-                background: "var(--sky)",
-                color: "#fff",
-                cursor: loading ? "not-allowed" : "pointer",
-                opacity: loading ? 0.7 : 1,
-              }}
-            >
-              {loading
-                ? "Saving..."
-                : editingApp
-                ? "Save Changes"
-                : "Embed Application"}
-            </button>
+          <div className="ap-field">
+            <span className="ap-label">How it loads</span>
+            <div className="ap-modes" role="radiogroup" aria-label="How it loads">
+              {(Object.keys(MODES) as EmbedMode[]).map((m) => (
+                <button key={m} type="button" role="radio" aria-checked={mode === m} className={`ap-mode-opt ${mode === m ? "on" : ""}`} onClick={() => setMode(m)}>
+                  <span className="ap-radio" />
+                  <span className="grow">
+                    <b>{MODES[m].label}{m === "proxy" && <em> · recommended</em>}</b>
+                    <span>{MODES[m].body} {MODES[m].when}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            {mode === "sandboxed" && (
+              <label className="ap-field" style={{ marginTop: 8 }}>
+                <span className="ap-label small">Sandbox permissions</span>
+                <input className="input mono ap-flags" value={flags} onChange={(e) => setFlags(e.target.value)} />
+              </label>
+            )}
           </div>
-        </form>
-      </div>
+
+          <div className="ap-preview">
+            <span className="ap-preview-label">On the Apps page</span>
+            <div className="ap-preview-card">
+              <AppTile icon={icon} category={category} size={40} />
+              <div className="grow">
+                <b>{name.trim() || "App name"}</b>
+                <code>{validUrl ? hostOf(normalised) : "address"}</code>
+              </div>
+              <span className="ap-cat" style={{ color: cat.colour }}>{cat.short}</span>
+            </div>
+          </div>
+        </div>
+
+        {error && <div className="error" style={{ margin: "0 22px 12px" }}>{error}</div>}
+        <div className="ap-modal-foot">
+          <button type="button" className="btn" onClick={onClose} disabled={loading}>Cancel</button>
+          <button type="submit" className="btn btn-primary" disabled={loading || !url.trim() || !name.trim()}>
+            {loading ? "Saving…" : editingApp ? "Save changes" : "Add app"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { q, one } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { syncAgentSchedule } from "@/lib/agent-schedule";
 import { startRun } from "@/lib/orchestrator";
+import { budgetCheck } from "@/lib/spend";
 import { parseSchedule, nextRun, describeSchedule } from "@/lib/schedule";
 
 export const runtime = "nodejs";
@@ -15,7 +16,7 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
   if (!agent) return NextResponse.json({ error: "Agent not found" }, { status: 404 });
 
   const pastRuns = await q<any>(
-    `select id, status, started_at, finished_at, trigger, cost_cents
+    `select id, status, started_at, ended_at as finished_at, trigger, round(cost_usd * 100, 3)::float8 as cost_cents
      from runs where agent_id = $1 and trigger in ('schedule', 'cron')
      order by started_at desc limit 10`,
     [id]
@@ -53,6 +54,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // Immediate test run of the scheduled task
   if (action === "run-now") {
+    const budget = await budgetCheck(u.orgId, agent.id);
+    if (!budget.ok) return NextResponse.json({ error: budget.reason }, { status: 402 });
     const prompt =
       standingInput ||
       agent.draft_spec?.trigger?.input ||

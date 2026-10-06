@@ -82,7 +82,7 @@ export async function POST(req: Request) {
   for (const a of claimed) {
     try {
       // An unattended run is exactly the kind that quietly overspends.
-      const budget = await budgetCheck(a.org_id);
+      const budget = await budgetCheck(a.org_id, a.id);
       if (!budget.ok) throw new Error(budget.reason!);
 
       const v = a.published_ver

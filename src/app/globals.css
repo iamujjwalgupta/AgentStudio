@@ -635,7 +635,7 @@ textarea:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   color: var(--link); cursor: pointer; text-decoration: underline;
 }
 .is-retired .card-name, .is-retired .name { opacity: .62; }
-.is-retired .card, .is-retired.agent-row { background: #fafbfd; }
+.is-retired .card, .is-retired.agent-row, .is-retired.skill-row { background: #fafbfd; }
 
 .diff-warn {
   margin: 10px 0 0; padding: 10px 13px; border-radius: var(--radius);
@@ -738,8 +738,9 @@ a.icon-act { text-decoration: none; }
 .card-wrap .card-foot {
   padding-right: 138px;
 }
+/* Skill cards have 4 action icons (Download, Edit, Retire/Restore, Delete) */
 .skill-card-wrap .card-foot {
-  padding-right: 76px;
+  padding-right: 118px;
 }
 .card-meta {
   min-width: 0; flex: 1;
@@ -907,9 +908,66 @@ a.icon-act { text-decoration: none; }
   .th { display: none; }
   .page { padding: 20px 16px 56px; }
 }
+/* ── navigation rail: icons, and the collapsed strip ───────────
+   Collapsing leaves a thin strip of icons with tooltips. The state is a cookie read
+   by the layout, so the server renders the right width and nothing flashes. Below
+   720px the rail is always the strip. */
+.rail { transition: width .18s ease; }
+.rail-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.rail-top .brand-mark { margin-bottom: 0; }
+.rail-toggle {
+  flex: none; width: 26px; height: 26px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 6px; border: 1px solid rgba(148,188,227,.22);
+  background: rgba(255,255,255,.04); color: #dce8f7; cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.rail-toggle:hover { background: rgba(255,255,255,.12); color: #fff; }
+.rail-toggle svg { transition: transform .18s ease; }
+.nav-ico { flex: none; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; opacity: .8; }
+.nav-item:hover .nav-ico, .nav-item.active .nav-ico { opacity: 1; }
+.sign-out { gap: 6px; }
+
+.shell.rail-collapsed .rail { width: 60px; }
+.shell.rail-collapsed .rail-toggle svg { transform: rotate(180deg); }
+.shell.rail-collapsed .brand { padding: 0 0 10px; }
+.shell.rail-collapsed .rail-top { flex-direction: column; gap: 10px; }
+.shell.rail-collapsed .brand-name,
+.shell.rail-collapsed .brand > .eyebrow,
+.shell.rail-collapsed .ws-switch,
+.shell.rail-collapsed .nav-label,
+.shell.rail-collapsed .nav-icon-label,
+.shell.rail-collapsed .rail-user,
+.shell.rail-collapsed .sign-out-label,
+.shell.rail-collapsed .tour-launch-btn span { display: none; }
+/* Section headings become thin dividers between groups. */
+.shell.rail-collapsed .nav-head { height: 1px; padding: 0; margin: 9px 16px; overflow: hidden; color: transparent; background: rgba(148,188,227,.22); }
+.shell.rail-collapsed .nav-head::before { display: none; }
+.shell.rail-collapsed .nav-item { position: relative; justify-content: center; padding: 9px 0; }
+.shell.rail-collapsed .nav-ico { opacity: .9; }
+.shell.rail-collapsed .nav-badge,
+.shell.rail-collapsed .nav-icon-badge { position: absolute; top: 2px; right: 8px; margin: 0; padding: 0 5px; font-size: 9px; line-height: 15px; }
+.shell.rail-collapsed .nav-icon-grid { flex-direction: column; gap: 6px; padding: 4px 10px 10px; }
+.shell.rail-collapsed .nav-icon-card { position: relative; flex: none; padding: 8px 0; }
+.shell.rail-collapsed .nav-icon-card .nav-icon-badge { top: -6px; right: -6px; }
+.shell.rail-collapsed .rail-foot { padding: 12px 10px 0; display: flex; flex-direction: column; align-items: center; }
+.shell.rail-collapsed .rail-actions-row { width: 100%; }
+.shell.rail-collapsed .tour-launch-btn { justify-content: center; padding: 7px 0; }
+.shell.rail-collapsed .sign-out { width: 100%; justify-content: center; padding: 7px 0; }
+
 @media (max-width: 720px) {
-  .rail { width: 62px; }
-  .rail .brand-name, .rail .eyebrow, .rail-foot > div:not(.eyebrow), .nav-label { display: none; }
+  .rail { width: 60px; }
+  .rail-toggle, .rail .brand-name, .rail .brand > .eyebrow, .rail .ws-switch, .rail-user,
+  .nav-label, .nav-icon-label, .sign-out-label, .tour-launch-btn span { display: none; }
+  .nav-item { justify-content: center; padding: 9px 0; position: relative; }
+  .nav-head { height: 1px; padding: 0; margin: 9px 16px; overflow: hidden; color: transparent; background: rgba(148,188,227,.22); }
+  .nav-head::before { display: none; }
+  .nav-badge, .nav-icon-badge { position: absolute; top: 2px; right: 8px; margin: 0; padding: 0 5px; font-size: 9px; line-height: 15px; }
+  .nav-icon-grid { flex-direction: column; gap: 6px; padding: 4px 10px 10px; }
+  .nav-icon-card { position: relative; flex: none; padding: 8px 0; }
+  .nav-icon-card .nav-icon-badge { top: -6px; right: -6px; }
+  .rail-foot { padding: 12px 10px 0; }
+  .tour-launch-btn, .sign-out { justify-content: center; padding: 7px 0; width: 100%; }
 }
 
 /* ── modifier aliases used by the components ───────────────── */

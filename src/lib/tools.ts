@@ -7,6 +7,7 @@ import { q, one } from "./db";
 import { skillName, type SkillRow } from "./skills";
 import type { Risk } from "./types";
 import { assertSafeUrl } from "./ssrf";
+import { anthropicUsage, assertWithinLimits, recordUsage } from "./metering";
 
 export type ToolContext = {
   orgId: string;
@@ -49,10 +50,27 @@ export type ToolDef = {
 
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
 
+/**
+ * The granted connection an action means. Models name connections loosely
+ * ("ap_demo" for "AP Ledger (ap_demo)"), and the schemas promise the name is
+ * optional with only one granted, so: the only one of its kind wins; otherwise
+ * id, exact name, name in any case, then a name that uniquely contains it.
+ */
 function connOf(ctx: ToolContext, kind: string, id?: string): ConnRow {
   const list = Object.values(ctx.connections).filter((c) => c.kind === kind);
-  const found = id ? list.find((c) => c.id === id || c.name === id) : list[0];
-  if (!found) throw new Error(`No ${kind} connection is available to this agent. Add one under Connections and grant it to the agent.`);
+  if (!list.length) throw new Error(`No ${kind} connection is available to this agent. Add one under Connections and grant it to the agent.`);
+  if (list.length === 1 || !id) return list[0];
+  const want = String(id).trim().toLowerCase();
+  const found =
+    list.find((c) => c.id === id || c.name === id) ??
+    list.find((c) => c.name.toLowerCase() === want) ??
+    (() => {
+      const partial = list.filter((c) => c.name.toLowerCase().includes(want));
+      return partial.length === 1 ? partial[0] : undefined;
+    })();
+  if (!found) {
+    throw new Error(`No ${kind} connection called "${id}" is granted to this agent. Use one of: ${list.map((c) => `"${c.name}"`).join(", ")}.`);
+  }
   return found;
 }
 
@@ -73,6 +91,68 @@ function stripHtml(html: string) {
 
 const clip = (s: string, n = 12000) => (s.length > n ? s.slice(0, n) + `\n…[truncated, ${s.length} chars total]` : s);
 
+/**
+ * A statement with its leading comments ("-- Test A: exact") removed, so the
+ * check on what kind of statement it is reads the statement itself. Comments
+ * inside it are left alone.
+ */
+function withoutLeadingComments(sql: string): string {
+  let s = sql.trim();
+  for (;;) {
+    if (s.startsWith("--")) {
+      const nl = s.indexOf("\n");
+      s = nl < 0 ? "" : s.slice(nl + 1).trim();
+    } else if (s.startsWith("/*")) {
+      const end = s.indexOf("*/");
+      s = end < 0 ? "" : s.slice(end + 2).trim();
+    } else return s;
+  }
+}
+
+/* ── uploaded tables ──────────────────────────────────────── */
+
+type UploadedTable = { name: string; cols: string[]; sqlCols: string[]; rows: Record<string, string>[] };
+
+/**
+ * An uploaded CSV of this workspace, parsed. Rows are numbered from 1 in file
+ * order, the same numbering the document reader uses, so a row an agent finds
+ * in a query is the row it names when writing a copy of the file.
+ */
+async function uploadedTable(orgId: string, name: string): Promise<UploadedTable> {
+  const docs = await q<any>(`select id, name, path from documents where org_id = $1 order by created_at desc limit 100`, [orgId]);
+  const doc = docs.find((d) => d.id === name || d.name === name || d.name.toLowerCase() === String(name).toLowerCase());
+  if (!doc) throw new Error(`No uploaded document named "${name}". Available: ${docs.map((d) => d.name).join(", ") || "none"}`);
+  if (![".csv", ".tsv"].includes(path.extname(doc.name).toLowerCase())) throw new Error(`"${doc.name}" is not a CSV file.`);
+  const parsed = Papa.parse<Record<string, string>>((await fs.readFile(doc.path, "utf8")).trim(), { header: true, skipEmptyLines: true });
+  const cols = (parsed.meta.fields || []).filter(Boolean);
+  // Column names a query can use as they are: lower case, letters, digits and underscores.
+  const seen = new Set<string>(["row_no"]);
+  const sqlCols = cols.map((c, i) => {
+    let s = c.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || `column_${i + 1}`;
+    if (/^[0-9]/.test(s)) s = `c_${s}`;
+    let u = s;
+    for (let n = 2; seen.has(u); n++) u = `${s}_${n}`;
+    seen.add(u);
+    return u;
+  });
+  return { name: doc.name, cols, sqlCols, rows: parsed.data };
+}
+
+async function loadUpload(client: PgClient, t: UploadedTable) {
+  const quoted = t.sqlCols.map((c) => `"${c}"`);
+  await client.query(`create temp table upload (row_no integer, ${quoted.map((c) => `${c} text`).join(", ")})`);
+  for (let start = 0; start < t.rows.length; start += 200) {
+    const batch = t.rows.slice(start, start + 200);
+    const width = t.cols.length + 1;
+    const values: any[] = [];
+    const tuples = batch.map((row, k) => {
+      values.push(start + k + 1, ...t.cols.map((c) => (row[c] ?? "").toString()));
+      return `(${Array.from({ length: width }, (_, j) => `$${k * width + j + 1}`).join(", ")})`;
+    });
+    await client.query(`insert into upload (row_no, ${quoted.join(", ")}) values ${tuples.join(", ")}`, values);
+  }
+}
+
 /* ── document parsing ─────────────────────────────────────── */
 
 async function parseDocument(filePath: string, name: string): Promise<string> {
@@ -88,19 +168,8 @@ async function parseDocument(filePath: string, name: string): Promise<string> {
     const r = await (mammoth.default ?? mammoth).extractRawText({ path: filePath });
     return r.value;
   }
-  const raw = await fs.readFile(filePath, "utf8");
-  if (ext === ".csv" || ext === ".tsv") {
-    const parsed = Papa.parse(raw.trim(), { header: true, skipEmptyLines: true });
-    const rows = parsed.data as any[];
-    const cols = parsed.meta.fields || [];
-    const head = rows.slice(0, 200);
-    return [
-      `Columns: ${cols.join(", ")}`,
-      `Rows: ${rows.length} (showing first ${head.length})`,
-      JSON.stringify(head),
-    ].join("\n");
-  }
-  return raw;
+  // Tables (CSV, TSV) are paged by read_document itself, row by row.
+  return fs.readFile(filePath, "utf8");
 }
 
 /* ── the registry ─────────────────────────────────────────── */
@@ -117,6 +186,8 @@ export const TOOLS: ToolDef[] = [
       required: ["query"],
     },
     async run({ query }, ctx) {
+      // A model call of its own, so it is metered and limited like the run that makes it.
+      await assertWithinLimits(ctx.orgId, "anthropic", ctx.agentId);
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -137,6 +208,12 @@ export const TOOLS: ToolDef[] = [
         }),
       });
       const data = await res.json();
+      await recordUsage(
+        { orgId: ctx.orgId, feature: "web_search", agentId: ctx.agentId, runId: ctx.runId, userId: ctx.userId },
+        "anthropic",
+        ctx.model || MODEL,
+        anthropicUsage(data),
+      );
       if (data.error) throw new Error(data.error.message || "Web search failed");
       const text = (data.content || [])
         .filter((b: any) => b.type === "text")
@@ -194,13 +271,27 @@ export const TOOLS: ToolDef[] = [
         list_tables: { type: "boolean", description: "Return the schema instead of running a query" },
         sql: { type: "string", description: "A single SELECT statement" },
         limit: { type: "number", description: "Max rows to return, default 200" },
+        document: {
+          type: "string",
+          description:
+            "Name of an uploaded CSV to use in the query as the temporary table `upload` (a row_no column plus the file's columns, all text). " +
+            "Join it to the database instead of copying the file's values into the SQL.",
+        },
       },
     },
-    async run({ connection, sql, list_tables, limit }, ctx) {
+    async run({ connection, sql, list_tables, limit, document }, ctx) {
       const c = connOf(ctx, "postgres", connection);
+      const upload = document ? await uploadedTable(ctx.orgId, document) : null;
       const client = new PgClient({ connectionString: secretOf(c), connectionTimeoutMillis: 10_000 });
       await client.connect();
       try {
+        // The file goes into a temporary table for this session only: it never
+        // touches the database's own tables, and a read-only transaction may
+        // still write to a temporary table.
+        if (upload) await loadUpload(client, upload);
+        const uploaded = upload
+          ? { uploaded_file: { name: upload.name, table: "upload", columns: ["row_no", ...upload.sqlCols], rows: upload.rows.length } }
+          : {};
         if (list_tables || !sql) {
           const r = await client.query(
             `select table_schema, table_name, column_name, data_type
@@ -213,16 +304,40 @@ export const TOOLS: ToolDef[] = [
             const k = `${row.table_schema}.${row.table_name}`;
             (byTable[k] ||= []).push(`${row.column_name} ${row.data_type}`);
           }
-          return { connection: c.name, schema: byTable };
+          // What the database says about itself: table and column comments, and
+          // the rules on allowed values (CHECK constraints), so an agent knows a
+          // status is 'paid' rather than guessing 'Paid'.
+          const notes: Record<string, string> = {};
+          const meta = await client
+            .query(
+              `select n.nspname || '.' || c.relname as t,
+                      obj_description(c.oid, 'pg_class') as comment,
+                      (select string_agg(a.attname || ': ' || col_description(c.oid, a.attnum), '; ')
+                         from pg_attribute a
+                        where a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+                          and col_description(c.oid, a.attnum) is not null) as columns,
+                      (select string_agg(pg_get_constraintdef(k.oid), '; ')
+                         from pg_constraint k where k.conrelid = c.oid and k.contype = 'c') as rules
+                 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                where c.relkind in ('r', 'v', 'p')
+                  and n.nspname not in ('pg_catalog', 'information_schema')
+                  and n.nspname not like 'pg\\_t%'`,
+            )
+            .catch(() => ({ rows: [] as any[] }));
+          for (const m of meta.rows) {
+            const parts = [m.comment, m.columns && `Columns: ${m.columns}`, m.rules && `Allowed values: ${m.rules}`].filter(Boolean);
+            if (parts.length && byTable[m.t]) notes[m.t] = parts.join(" · ");
+          }
+          return { connection: c.name, schema: byTable, ...(Object.keys(notes).length ? { notes } : {}), ...uploaded };
         }
-        const trimmed = sql.trim().replace(/;+\s*$/, "");
+        const trimmed = withoutLeadingComments(sql).replace(/;+\s*$/, "");
         if (!/^(select|with)\b/i.test(trimmed) || /;/.test(trimmed)) {
           throw new Error("Only a single read-only SELECT (or WITH … SELECT) statement is permitted.");
         }
         const capped = /\blimit\b/i.test(trimmed) ? trimmed : `${trimmed} limit ${Math.min(limit || 200, 1000)}`;
         await client.query("set default_transaction_read_only = on");
         const r = await client.query(capped);
-        return { connection: c.name, rowCount: r.rowCount, rows: r.rows.slice(0, 500) };
+        return { connection: c.name, rowCount: r.rowCount, rows: r.rows.slice(0, 500), ...uploaded };
       } finally {
         await client.end();
       }
@@ -233,13 +348,18 @@ export const TOOLS: ToolDef[] = [
     id: "read_document",
     label: "Read an uploaded document",
     description:
-      "Read a file the user uploaded — CSV, PDF, DOCX or plain text. Call with no name to list what is available.",
+      "Read a file the user uploaded — CSV, PDF, DOCX or plain text. Call with no name to list what is available. " +
+      "Long files come back a page at a time; the result says which rows (or characters) it holds and where to read on from.",
     risk: "low",
     schema: {
       type: "object",
-      properties: { name: { type: "string", description: "File name or id. Omit to list available documents." } },
+      properties: {
+        name: { type: "string", description: "File name or id. Omit to list available documents." },
+        from_row: { type: "number", description: "CSV only: the first data row to return, counting from 1. Default 1." },
+        from_char: { type: "number", description: "Other files: the character to start from, counting from 0. Default 0." },
+      },
     },
-    async run({ name }, ctx) {
+    async run({ name, from_row, from_char }, ctx) {
       const docs = await q<any>(
         `select id, name, mime, path, size_bytes from documents where org_id = $1 order by created_at desc limit 100`,
         [ctx.orgId],
@@ -247,8 +367,49 @@ export const TOOLS: ToolDef[] = [
       if (!name) return { documents: docs.map((d) => ({ id: d.id, name: d.name, size: d.size_bytes })) };
       const doc = docs.find((d) => d.id === name || d.name === name || d.name.toLowerCase() === String(name).toLowerCase());
       if (!doc) throw new Error(`No document named "${name}". Available: ${docs.map((d) => d.name).join(", ") || "none"}`);
+
+      // A table comes back as CSV text, whole rows only, as many as fit a page.
+      // The agent is told exactly which rows it has, so it never mistakes part
+      // of a file for all of it.
+      const ext = path.extname(doc.name).toLowerCase();
+      if (ext === ".csv" || ext === ".tsv") {
+        const parsed = Papa.parse((await fs.readFile(doc.path, "utf8")).trim(), { header: true, skipEmptyLines: true });
+        const cols = parsed.meta.fields || [];
+        const rows = parsed.data as any[];
+        const start = Math.min(Math.max(Math.floor(Number(from_row) || 1), 1), Math.max(rows.length, 1)) - 1;
+        const cell = (v: any) => {
+          const s = v == null ? "" : String(v);
+          return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+        const lines = [cols.map(cell).join(",")];
+        let size = lines[0].length;
+        let i = start;
+        for (; i < rows.length; i++) {
+          const line = cols.map((c) => cell(rows[i][c])).join(",");
+          if (size + line.length > 18000 && i > start) break;
+          lines.push(line);
+          size += line.length + 1;
+        }
+        return {
+          name: doc.name,
+          columns: cols,
+          totalRows: rows.length,
+          rows: rows.length ? `${start + 1}–${i} of ${rows.length}` : "none",
+          ...(i < rows.length ? { more: `Rows ${i + 1}–${rows.length} are not shown. Call again with from_row ${i + 1}.` } : { complete: true }),
+          content: lines.join("\n"),
+        };
+      }
+
       const text = await parseDocument(doc.path, doc.name);
-      return { name: doc.name, characters: text.length, content: clip(text, 20000) };
+      const at = Math.min(Math.max(Math.floor(Number(from_char) || 0), 0), text.length);
+      const end = Math.min(at + 20000, text.length);
+      return {
+        name: doc.name,
+        characters: text.length,
+        shown: `${at}–${end}`,
+        ...(end < text.length ? { more: `Characters ${end}–${text.length} are not shown. Call again with from_char ${end}.` } : { complete: true }),
+        content: text.slice(at, end),
+      };
     },
   },
 
@@ -369,10 +530,34 @@ export const TOOLS: ToolDef[] = [
       properties: {
         filename: { type: "string", description: "Including extension, e.g. summary.md" },
         content: { type: "string", description: "File contents. For docx, plain text with blank lines between paragraphs." },
+        source_document: {
+          type: "string",
+          description:
+            "Instead of content: an uploaded CSV to copy, exactly as it is, except the rows listed in drop_rows. Use this for a corrected copy of a file.",
+        },
+        drop_rows: {
+          type: "array",
+          items: { type: "number" },
+          description: "With source_document: the row numbers to leave out (data rows counted from 1, as row_no in a query's upload table).",
+        },
       },
-      required: ["filename", "content"],
+      required: ["filename"],
     },
-    async run({ filename, content }, ctx) {
+    async run({ filename, content, source_document, drop_rows }, ctx) {
+      // A corrected copy of an uploaded table is made here, row for row, rather
+      // than retyped by the model, which drops and miscopies lines in long files.
+      let dropped: number[] | undefined;
+      let kept: number | undefined;
+      if (source_document) {
+        const t = await uploadedTable(ctx.orgId, source_document);
+        const drop = new Set((Array.isArray(drop_rows) ? drop_rows : []).map((n: any) => Math.floor(Number(n))));
+        dropped = [...drop].filter((n) => n >= 1 && n <= t.rows.length).sort((a, b) => a - b);
+        const rows = t.rows.filter((_, i) => !drop.has(i + 1));
+        kept = rows.length;
+        content = Papa.unparse({ fields: t.cols, data: rows.map((r) => t.cols.map((c) => r[c] ?? "")) }, { newline: "\n" }) + "\n";
+      } else if (content == null) {
+        throw new Error("Give the file's content, or a source_document to copy.");
+      }
       const safe = path.basename(filename).replace(/[^\w.\- ]+/g, "_");
       const dir = path.join(ctx.storageDir, "artifacts", ctx.orgId);
       await fs.mkdir(dir, { recursive: true });
@@ -398,7 +583,12 @@ export const TOOLS: ToolDef[] = [
          values ($1,$2,$3,$4,$5,$6) returning id`,
         [ctx.orgId, safe, "generated", target, stat.size, ctx.userId],
       );
-      return { file: safe, bytes: stat.size, downloadUrl: `/api/documents/${row.id}` };
+      return {
+        file: safe,
+        bytes: stat.size,
+        downloadUrl: `/api/documents/${row.id}`,
+        ...(dropped ? { copiedFrom: source_document, rowsDropped: dropped, rowsKept: kept } : {}),
+      };
     },
   },
 
@@ -419,12 +609,13 @@ export const TOOLS: ToolDef[] = [
     },
     async run({ connection, sql }, ctx) {
       const c = connOf(ctx, "postgres", connection);
-      if (c.config?.allowWrites !== "yes") {
+      // The Connections form saves a checkbox (true); connections made before it may hold "yes".
+      if (c.config?.allowWrites !== true && c.config?.allowWrites !== "yes") {
         throw new Error(
-          `Write execution is disabled on connection "${c.name}". Enable "Allow write statements" in Connections settings to allow mutations.`
+          `Writes are turned off for the connection "${c.name}". An admin can turn on "Allow write statements" on it under Connections.`
         );
       }
-      const trimmed = String(sql || "").trim().replace(/;+\s*$/, "");
+      const trimmed = withoutLeadingComments(String(sql || "")).replace(/;+\s*$/, "");
       if (!trimmed) throw new Error("SQL statement cannot be empty.");
       if (trimmed.includes(";")) {
         throw new Error("Multiple SQL statements in a single execution are prohibited for security.");

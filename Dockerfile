@@ -24,8 +24,10 @@ ENV PORT=3000
 # or they vanish when the container is replaced.
 ENV STORAGE_DIR=/data/storage
 
+# Fixed uid/gid so a mounted volume (e.g. a Cloud Storage bucket on Cloud Run) can be
+# made writable for this user with uid=1001,gid=1001 mount options.
 RUN apk add --no-cache curl \
- && addgroup -S app && adduser -S app -G app \
+ && addgroup -S -g 1001 app && adduser -S -u 1001 app -G app \
  && mkdir -p /data/storage && chown -R app:app /data
 
 COPY --from=build --chown=app:app /app/node_modules ./node_modules
@@ -40,4 +42,7 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD curl -fsS http://127.0.0.1:3000/api/health || exit 1
 
-CMD ["npm", "run", "start"]
+# The web app plus the scheduler, which ticks /api/cron on 127.0.0.1. Run as node
+# directly (not through npm) so SIGTERM from the platform reaches the launcher.
+# For a web-only container use: CMD ["npx", "next", "start"]
+CMD ["node", "scripts/with-scheduler.mjs", "start"]

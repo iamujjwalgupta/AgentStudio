@@ -1,53 +1,11 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { q, one } from "./db";
-import { decrypt } from "./crypto";
+import { draftText, type Engine } from "./models";
 import { SELECTABLE_TOOLS, defaultGate } from "./tools";
 import { skillName, LABEL_MAX, DESCRIPTION_MAX, INSTRUCTIONS_MAX, type SkillRow } from "./skills";
 import { emptySpec, normaliseInputs, type AgentSpec, type SpecInput } from "./types";
 
-export const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
-
-export const NO_KEY =
-  "No Anthropic API key is available to this workspace. Add one under Connections, or set ANTHROPIC_API_KEY on the server.";
-
-export type ModelAccess = { apiKey: string; model: string; source: "connection" | "environment" };
-
-/**
- * Where the model credential comes from, in order: the workspace's own
- * Anthropic connection, then the server environment. The connection wins so a
- * workspace can bring its own key and its own model without a redeploy.
- */
-export async function modelAccess(orgId: string): Promise<ModelAccess> {
-  const row = await one<any>(
-    `select config, secret_enc from connections where org_id = $1 and kind = 'anthropic' limit 1`,
-    [orgId],
-  );
-  const fromConn = row?.secret_enc ? decrypt(row.secret_enc) : "";
-  if (fromConn) {
-    return { apiKey: fromConn, model: row.config?.model?.trim() || MODEL, source: "connection" };
-  }
-  const fromEnv = process.env.ANTHROPIC_API_KEY || "";
-  if (fromEnv) return { apiKey: fromEnv, model: MODEL, source: "environment" };
-  throw new Error(NO_KEY);
-}
-
-// One client per distinct key, so switching the workspace key takes effect at once.
-const clients = new Map<string, Anthropic>();
-export function clientFor(apiKey: string) {
-  if (!apiKey) throw new Error(NO_KEY);
-  let c = clients.get(apiKey);
-  if (!c) {
-    c = new Anthropic({ apiKey });
-    clients.set(apiKey, c);
-  }
-  return c;
-}
-
-/** Resolves the workspace's credential and returns a client bound to it. */
-export async function anthropicFor(orgId: string) {
-  const access = await modelAccess(orgId);
-  return { client: clientFor(access.apiKey), ...access };
-}
+// Model keys and engines live in lib/models.ts; re-exported for existing callers.
+export { MODEL, NO_KEY, modelAccess, clientFor, anthropicFor, type ModelAccess } from "./models";
 
 export async function audit(
   orgId: string,
@@ -80,8 +38,9 @@ export async function compileBrief(
   orgId: string,
   brief: string,
   connections: { id: string; name: string; kind: string; config: any }[],
+  userId?: string,
+  engine?: Engine,
 ): Promise<AgentSpec> {
-  const { client, model } = await anthropicFor(orgId);
   const connLines = connections.length
     ? connections.map((c) => `- id "${c.id}" · ${c.name} (${c.kind})`).join("\n")
     : "- (none connected yet)";
@@ -103,6 +62,7 @@ RULES
 - Only reference tool ids from the list.
 - gate must be "approval" for every tool whose risk is medium or high. Low risk tools may be "auto".
 - archetype: analyst (investigates and answers), author (produces a document or message), operator (carries out a process), sentinel (watches for a condition).
+- trigger.type: "manual" unless the brief names a cadence ("every Monday", "daily at 8am"), then "schedule" with that cadence in schedule. A sentinel checks on a schedule.
 - steps: 3 to 6 plain imperative sentences describing the work in order. No mention of prompts, models or JSON.
 - inputs: things the person must supply at run time, if any. Empty array if the agent needs nothing.
 - domain: two or three words naming the field of work, e.g. "customer support", "market research", "devops".
@@ -110,26 +70,19 @@ RULES
 - Reply with ONLY the JSON object. No prose, no code fences.
 
 SCHEMA
-{"name":"","archetype":"","domain":"","purpose":"","sources":[{"connectionId":"","scope":""}],"steps":[""],"tools":[{"id":"","gate":"auto|approval"}],"inputs":[{"label":"","hint":""}],"output":{"format":"","instructions":""},"trigger":{"type":"manual|schedule|event","schedule":"","condition":""}}
+{"name":"","archetype":"","domain":"","purpose":"","sources":[{"connectionId":"","scope":""}],"steps":[""],"tools":[{"id":"","gate":"auto|approval"}],"inputs":[{"label":"","hint":""}],"output":{"format":"","instructions":""},"trigger":{"type":"manual|schedule","schedule":""}}
 
 BRIEF
 ${brief}`;
 
-  const res = await client.messages.create({
-    model,
-    max_tokens: 2000,
-    messages: [{ role: "user", content: prompt }],
-  });
-  const text = res.content
-    .filter((b: any) => b.type === "text")
-    .map((b: any) => b.text)
-    .join("\n");
+  const { text } = await draftText(orgId, prompt, { engine, maxTokens: 2000, meter: { orgId, feature: "drafting", userId } });
   const j = extractJSON(text);
 
   const base = emptySpec();
   const validConn = new Set(connections.map((c) => c.id));
   return {
     ...base,
+    ...(engine ? { engine } : {}),
     brief,
     name: j.name || "Untitled agent",
     archetype: ["analyst", "author", "operator", "sentinel"].includes(j.archetype) ? j.archetype : "analyst",
@@ -145,7 +98,11 @@ ${brief}`;
       }),
     inputs: Array.isArray(j.inputs) ? j.inputs.slice(0, 5) : [],
     output: { format: j.output?.format || "Markdown summary", instructions: j.output?.instructions || "" },
-    trigger: j.trigger?.type ? j.trigger : base.trigger,
+    // Nothing starts a run from an event, so only on-demand and scheduled triggers are offered.
+    trigger:
+      j.trigger?.type === "schedule" && j.trigger.schedule
+        ? { type: "schedule", schedule: String(j.trigger.schedule) }
+        : base.trigger,
   };
 }
 
@@ -218,6 +175,8 @@ export function buildSystemPrompt(
     ``,
     `OPERATING RULES`,
     `- Use the tools provided. Never invent data you have not retrieved.`,
+    `- If an action fails, read the error, fix what you sent and try again. If you still cannot get it to work, say plainly in the deliverable what could not be done. Never report "none found" or zero for a check that did not run.`,
+    `- Only describe an action as done (held, sent, posted, saved, updated) when the tool for it succeeded in this run. If it is waiting for approval, say it is waiting.`,
     spec.guardrails.requireCitations
       ? `- Cite the source of every figure or claim: the table and query, the URL, or the document name.`
       : "",
@@ -245,8 +204,7 @@ export type SkillDraft = { name: string; label: string; description: string; ins
  * model call that produces something structured and editable, never something
  * that goes live unread. Everything it returns lands in the editor.
  */
-export async function draftSkill(orgId: string, brief: string): Promise<SkillDraft> {
-  const { client, model } = await anthropicFor(orgId);
+export async function draftSkill(orgId: string, brief: string, userId?: string): Promise<SkillDraft> {
 
   const prompt = `You write reusable skills for AI agents. A skill is one piece of know-how a team has \
 written down: how they do a specific kind of work, in their own words. It is instruction, not capability \
@@ -272,15 +230,7 @@ SCHEMA
 DESCRIPTION
 ${brief}`;
 
-  const res = await client.messages.create({
-    model,
-    max_tokens: 4000,
-    messages: [{ role: "user", content: prompt }],
-  });
-  const text = res.content
-    .filter((b: any) => b.type === "text")
-    .map((b: any) => b.text)
-    .join("\n");
+  const { text } = await draftText(orgId, prompt, { maxTokens: 4000, meter: { orgId, feature: "skill_writing", userId } });
   const j = extractJSON(text);
 
   const label = String(j.label || "Untitled skill").slice(0, LABEL_MAX);
@@ -308,8 +258,8 @@ export type CorrectionContext = {
 export async function synthesizeSkillFromCorrection(
   orgId: string,
   ctx: CorrectionContext,
+  userId?: string,
 ): Promise<SkillDraft> {
-  const { client, model } = await anthropicFor(orgId);
 
   const payloadSummary = ctx.payload
     ? typeof ctx.payload === "string"
@@ -351,15 +301,7 @@ RULES:
 SCHEMA:
 {"label":"","description":"","instructions":""}`;
 
-  const res = await client.messages.create({
-    model,
-    max_tokens: 4000,
-    messages: [{ role: "user", content: prompt }],
-  });
-  const text = res.content
-    .filter((b: any) => b.type === "text")
-    .map((b: any) => b.text)
-    .join("\n");
+  const { text } = await draftText(orgId, prompt, { maxTokens: 4000, meter: { orgId, feature: "skill_writing", userId } });
   const j = extractJSON(text);
 
   const label = String(j.label || "Corrective Operational Standard").slice(0, LABEL_MAX);

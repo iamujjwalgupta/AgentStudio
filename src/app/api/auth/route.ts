@@ -144,7 +144,23 @@ export async function POST(req: Request) {
   return NextResponse.json({ ok: true });
 }
 
-export async function GET() {
+/**
+ * GET ?invite=<token>: who an invitation is from, so the sign-in page can say
+ * which workspace you are joining. Holding the token is what proves you were
+ * invited; an unknown or spent token says only that it is not valid.
+ * Without a token: the database health check.
+ */
+export async function GET(req: Request) {
+  const token = new URL(req.url).searchParams.get("invite");
+  if (token) {
+    const inv = await one<any>(
+      `select i.email, i.invited_by_name, o.name as org_name from invitations i join orgs o on o.id = i.org_id
+        where i.token = $1 and i.status = 'pending' and i.expires_at > now()`,
+      [token],
+    );
+    if (!inv) return NextResponse.json({ valid: false });
+    return NextResponse.json({ valid: true, email: inv.email, org: inv.org_name, invitedBy: inv.invited_by_name });
+  }
   const rows = await q(`select 1 as ok`);
   return NextResponse.json({ db: rows.length === 1 });
 }

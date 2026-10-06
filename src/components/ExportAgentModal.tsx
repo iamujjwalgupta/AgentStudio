@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import type { ExportTarget, ExportRuntime, ExportBundle, ExportFile } from "@/lib/agent-exporter";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import type { ExportBundle, ExportFile, ExportRuntime, ExportTarget } from "@/lib/agent-exporter";
+import { AlertIcon, CheckIcon, CopyIcon, CrossIcon, ExportIcon, ShieldIcon } from "@/components/agent-ui";
 
 type Props = {
   agentId: string;
@@ -10,680 +12,472 @@ type Props = {
   onClose: () => void;
 };
 
-const CLOUD_OPTIONS: { id: ExportTarget; label: string; tag: string; blurb: string }[] = [
-  { id: "gcp", label: "Google Cloud (GCP)", tag: "Cloud Run / Functions", blurb: "Containerized Cloud Run microservice or event-driven Cloud Function" },
-  { id: "aws", label: "Amazon Web Services (AWS)", tag: "Lambda / App Runner", blurb: "Serverless Lambda function with SAM or App Runner container" },
-  { id: "azure", label: "Microsoft Azure", tag: "Container Apps / Functions", blurb: "Azure Container Apps with KEDA scaling or Azure Functions v4" },
-  { id: "docker", label: "Docker / Standalone", tag: "Generic Container", blurb: "Portable multi-stage container runnable anywhere (K8s, VPS, local)" },
-  { id: "python", label: "Python (FastAPI)", tag: "Anthropic Python SDK", blurb: "FastAPI microservice + official Anthropic SDK runner with requirements.txt and Dockerfile" },
+const TARGETS: { id: ExportTarget; label: string; blurb: string }[] = [
+  { id: "gcp", label: "Google Cloud", blurb: "Cloud Run service or Cloud Function" },
+  { id: "aws", label: "AWS", blurb: "App Runner container or Lambda function" },
+  { id: "azure", label: "Microsoft Azure", blurb: "Container Apps" },
+  { id: "docker", label: "Docker", blurb: "Any server, or your own machine" },
+  { id: "python", label: "Python", blurb: "A FastAPI service, for Python teams" },
 ];
 
+/** Where a platform offers both, the two ways to run it, in its own words. */
+const RUNTIMES: Partial<Record<ExportTarget, { id: ExportRuntime; label: string }[]>> = {
+  gcp: [
+    { id: "container", label: "Service (Cloud Run)" },
+    { id: "serverless", label: "Function (Cloud Functions)" },
+  ],
+  aws: [
+    { id: "container", label: "Container (App Runner)" },
+    { id: "serverless", label: "Function (Lambda)" },
+  ],
+};
+
+type Tab = "package" | "call";
+
 export default function ExportAgentModal({ agentId, agentName, isOpen, onClose }: Props) {
-  const [modalTab, setModalTab] = useState<"package" | "rest_api">("package");
+  const [tab, setTab] = useState<Tab>("package");
   const [target, setTarget] = useState<ExportTarget>("gcp");
   const [runtime, setRuntime] = useState<ExportRuntime>("container");
   const [bundle, setBundle] = useState<ExportBundle | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [activeFile, setActiveFile] = useState<ExportFile | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
-
-  // REST API state
-  const [apiSnippetLang, setApiSnippetLang] = useState<"curl" | "python" | "node">("curl");
-  const [testInput, setTestInput] = useState("Hello! Analyze our spend data and check for anomalies.");
-  const [testResponse, setTestResponse] = useState<any | null>(null);
-  const [testStatus, setTestStatus] = useState<number | null>(null);
-  const [testingApi, setTestingApi] = useState(false);
-  const [origin, setOrigin] = useState("http://localhost:3000");
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setOrigin(window.location.origin);
-    }
-  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
-    if (modalTab === "package") {
-      loadPreview();
-    }
-  }, [isOpen, target, runtime, modalTab]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, [isOpen, onClose]);
 
-  async function loadPreview() {
+  useEffect(() => {
+    if (!isOpen) return;
+    let live = true;
     setLoading(true);
     setError("");
-    try {
-      const res = await fetch(`/api/agents/${agentId}/export?target=${target}&runtime=${runtime}&format=json`);
-      if (!res.ok) {
+    fetch(`/api/agents/${agentId}/export?target=${target}&runtime=${runtime}&format=json`)
+      .then(async (res) => {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to generate export bundle preview.");
-      }
-      const data = await res.json();
-      setBundle(data.bundle);
-      if (data.bundle?.files?.length) {
-        // Default to runner.mjs or first file
-        const preferred = data.bundle.files.find((f: ExportFile) => f.path === "runner.mjs") || data.bundle.files[0];
-        setActiveFile(preferred);
-      }
-    } catch (err: any) {
-      setError(err.message || String(err));
-    } finally {
-      setLoading(false);
-    }
-  }
+        if (!res.ok) throw new Error(data.error || "Could not prepare the package.");
+        if (live) setBundle(data.bundle);
+      })
+      .catch((e) => live && setError(e.message || String(e)))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, [isOpen, agentId, target, runtime]);
 
-  function downloadZip() {
-    const url = `/api/agents/${agentId}/export?target=${target}&runtime=${runtime}&format=zip`;
-    window.location.href = url;
-  }
+  if (!isOpen) return null;
 
-  async function copyText(text: string, label: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(label);
-      setTimeout(() => setCopied(null), 2500);
-    } catch {
-      /* ignore */
-    }
-  }
+  const version = bundle
+    ? bundle.version
+      ? `Version ${bundle.version}, the published one. Changes in the draft that aren't published are not included.`
+      : "Never published, so this is the current draft."
+    : loading
+      ? "Preparing…"
+      : "";
 
-  async function runTestInvoke() {
-    setTestingApi(true);
-    setTestResponse(null);
-    setTestStatus(null);
-    const start = performance.now();
+  return (
+    <div className="modal-back" onMouseDown={onClose}>
+      <div className="panel modal ex" role="dialog" aria-modal="true" aria-labelledby="ex-title" onMouseDown={(e) => e.stopPropagation()}>
+        <header className="ex-head">
+          <span className="ex-mark"><ExportIcon size={18} /></span>
+          <div className="ex-title">
+            <div className="eyebrow">Export</div>
+            <h2 id="ex-title">{agentName}</h2>
+            <p>{version}</p>
+          </div>
+          <button className="ex-x" onClick={onClose} aria-label="Close"><CrossIcon size={14} /></button>
+        </header>
+
+        <nav className="ex-tabs" role="tablist">
+          <button role="tab" aria-selected={tab === "package"} className={tab === "package" ? "on" : ""} onClick={() => setTab("package")}>
+            Download a package
+          </button>
+          <button role="tab" aria-selected={tab === "call"} className={tab === "call" ? "on" : ""} onClick={() => setTab("call")}>
+            Call it through Agent Studio
+          </button>
+        </nav>
+
+        {error && <div className="error ex-error">{error}</div>}
+
+        {tab === "package" ? (
+          <PackageTab
+            agentId={agentId}
+            target={target}
+            runtime={runtime}
+            setTarget={(t) => {
+              setTarget(t);
+              if (!RUNTIMES[t]) setRuntime("container");
+            }}
+            setRuntime={setRuntime}
+            bundle={bundle}
+            loading={loading}
+          />
+        ) : (
+          <CallTab agentId={agentId} bundle={bundle} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---- download a package ------------------------------------------------------------------
+
+function PackageTab({
+  agentId,
+  target,
+  runtime,
+  setTarget,
+  setRuntime,
+  bundle,
+  loading,
+}: {
+  agentId: string;
+  target: ExportTarget;
+  runtime: ExportRuntime;
+  setTarget: (t: ExportTarget) => void;
+  setRuntime: (r: ExportRuntime) => void;
+  bundle: ExportBundle | null;
+  loading: boolean;
+}) {
+  const [file, setFile] = useState<string | null>(null);
+  const runtimes = RUNTIMES[target];
+  const actions = bundle?.actions ?? [];
+  const held = actions.filter((a) => a.works && a.gate === "approval");
+  const needed = (bundle?.requiredEnvVars ?? []).filter((v) => v.required);
+  const optional = (bundle?.requiredEnvVars ?? []).length - needed.length;
+  const withheld = (bundle?.skills ?? []).some((s) => !s.included);
+  const shown: ExportFile | undefined = bundle?.files.find((f) => f.path === file) ?? bundle?.files.find((f) => /^runner\./.test(f.path));
+
+  return (
+    <div className="ex-body ex-pkg">
+      <aside className="ex-side">
+        <div className="ex-label">Where will it run?</div>
+        <div className="ex-targets" role="radiogroup" aria-label="Where will it run?">
+          {TARGETS.map((t) => (
+            <button key={t.id} role="radio" aria-checked={target === t.id} className={`ex-target${target === t.id ? " on" : ""}`} onClick={() => setTarget(t.id)}>
+              <span className="ex-radio" />
+              <span>
+                <b>{t.label}</b>
+                <small>{t.blurb}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {runtimes && (
+          <>
+            <div className="ex-label">Run it as</div>
+            <div className="ex-seg">
+              {runtimes.map((r) => (
+                <button key={r.id} className={runtime === r.id ? "on" : ""} onClick={() => setRuntime(r.id)}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        <div className="ex-download">
+          <a
+            className={`btn btn-primary${!bundle || loading ? " disabled" : ""}`}
+            href={bundle && !loading ? `/api/agents/${agentId}/export?target=${target}&runtime=${runtime}&format=zip` : undefined}
+            aria-disabled={!bundle || loading}
+          >
+            <ExportIcon size={14} /> Download .zip
+          </a>
+          <p>{bundle ? `${bundle.files.length} files. Downloads are recorded in the audit trail.` : " "}</p>
+        </div>
+      </aside>
+
+      <section className={`ex-main${loading ? " busy" : ""}`}>
+        {!bundle ? (
+          <div className="ex-skel"><span /><span /><span /></div>
+        ) : (
+          <>
+            <p className="ex-lead">
+              The agent on its own: its instructions, skills and actions, with a small service that runs it on your Anthropic
+              key. Callers need the access token that comes filled in with the package.
+            </p>
+
+            <h3 className="ex-h">What it can do</h3>
+            {actions.length === 0 ? (
+              <p className="ex-none">No actions. It reads its instructions and answers.</p>
+            ) : (
+              <ul className="ex-actions">
+                {actions.map((a) => (
+                  <li key={a.id} className={a.works ? "" : "off"}>
+                    <span className="ex-act-name">{a.label}</span>
+                    <span className={`ex-pill ${!a.works ? "off" : a.gate === "approval" ? "ask" : "auto"}`}>
+                      {!a.works ? "Not included" : a.gate === "approval" ? "Waits for approval" : "Runs by itself"}
+                    </span>
+                    {a.note && <small>{a.note}</small>}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {held.length > 0 && (
+              <div className="ex-callout">
+                <ShieldIcon size={15} />
+                <div>
+                  <b>Approval still applies.</b> Actions that wait for approval are not carried out by the package. They come back in
+                  the response as <code>heldActions</code>; once someone has checked one, send it to <code>POST /approve</code>.
+                  Setting <code>APPROVE_ALL_ACTIONS=true</code> removes the check.
+                </div>
+              </div>
+            )}
+
+            {bundle.skills.length > 0 && (
+              <>
+                <h3 className="ex-h">Skills</h3>
+                <div className="ex-chips">
+                  {bundle.skills.map((s) => (
+                    <span key={s.label} className={`ex-chip${s.included ? "" : " off"}`}>
+                      {s.included ? <CheckIcon size={11} /> : <AlertIcon size={11} />} {s.label}
+                    </span>
+                  ))}
+                </div>
+                {withheld && (
+                  <p className="ex-note">
+                    Only workspace admins can export skill instructions, so the package has their names but not their content. Ask for a
+                    download on the Skills page.
+                  </p>
+                )}
+              </>
+            )}
+
+            <h3 className="ex-h">Settings it needs</h3>
+            <div className="ex-chips">
+              {needed.map((v) => (
+                <span key={v.key} className="ex-chip mono" title={v.description}>{v.key}</span>
+              ))}
+            </div>
+            <p className="ex-note">
+              {optional > 0 ? `Plus ${optional} optional. ` : ""}All listed in <code>.env.example</code>; the access token is already filled
+              with a random value made for this download.
+            </p>
+
+            <h3 className="ex-h">Stays in Agent Studio</h3>
+            <ul className="ex-stays">
+              {bundle.notCarried.map((c) => (
+                <li key={c}>{c}</li>
+              ))}
+            </ul>
+
+            <h3 className="ex-h">Deploy</h3>
+            <CopyLine text={bundle.deployCommand} />
+            <p className="ex-note">
+              Or run <code>deploy.sh</code>, which checks the settings first. The README walks through it.
+            </p>
+
+            <details className="ex-files">
+              <summary>Look inside: {bundle.files.length} files</summary>
+              <div className="ex-files-grid">
+                <ul>
+                  {bundle.files.map((f) => (
+                    <li key={f.path}>
+                      <button className={shown?.path === f.path ? "on" : ""} onClick={() => setFile(f.path)} title={f.description}>
+                        {f.path}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {shown && (
+                  <div className="ex-code">
+                    <div className="ex-code-head">
+                      <span>{shown.description}</span>
+                      <CopyButton text={shown.content} />
+                    </div>
+                    <pre>{shown.content}</pre>
+                  </div>
+                )}
+              </div>
+            </details>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// ---- call it through Agent Studio -------------------------------------------------------------
+
+function CallTab({ agentId, bundle }: { agentId: string; bundle: ExportBundle | null }) {
+  const [origin, setOrigin] = useState("");
+  const [input, setInput] = useState("");
+  const [rehearse, setRehearse] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ status: number; data: any } | null>(null);
+
+  useEffect(() => setOrigin(window.location.origin), []);
+
+  const endpoint = `${origin}/api/v1/agents/${agentId}/invoke`;
+  const inputs = bundle?.call.inputs ?? [];
+  const example = `const res = await fetch("${endpoint}", {
+  method: "POST",
+  credentials: "include", // your Agent Studio sign-in
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    input: "What should I look at first?",${inputs.length ? `\n    inputs: { ${inputs.map((i) => `${i.key}: "..."`).join(", ")} },` : ""}
+    dryRun: false
+  })
+});
+const run = await res.json(); // run.status, run.output, run.runId`;
+
+  async function tryIt() {
+    setBusy(true);
+    setResult(null);
     try {
       const res = await fetch(`/api/v1/agents/${agentId}/invoke`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input: testInput }),
+        body: JSON.stringify({ input, dryRun: rehearse }),
       });
-      const data = await res.json();
-      const elapsed = Math.round(performance.now() - start);
-      setTestStatus(res.status);
-      setTestResponse({ ...data, _durationMs: elapsed });
-    } catch (err: any) {
-      setTestStatus(500);
-      setTestResponse({ error: err.message || String(err) });
+      setResult({ status: res.status, data: await res.json().catch(() => ({})) });
+    } catch (e: any) {
+      setResult({ status: 0, data: { error: e.message || String(e) } });
     } finally {
-      setTestingApi(false);
+      setBusy(false);
     }
   }
 
-  const endpointUrl = `${origin}/api/v1/agents/${agentId}/invoke`;
-
-  const curlSnippet = `curl -X POST "${endpointUrl}" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "input": "${testInput.replace(/"/g, '\\"')}",
-    "version": "published"
-  }'`;
-
-  const pythonSnippet = `import requests
-
-url = "${endpointUrl}"
-headers = {"Content-Type": "application/json"}
-payload = {
-    "input": """${testInput}""",
-    "version": "published"
-}
-
-response = requests.post(url, json=payload, headers=headers)
-print("HTTP Status:", response.status_code)
-data = response.json()
-print("Run ID:", data.get("runId"))
-print("Output:", data.get("output"))`;
-
-  const nodeSnippet = `const response = await fetch("${endpointUrl}", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    input: "${testInput.replace(/"/g, '\\"')}",
-    version: "published",
-  }),
-});
-
-const data = await response.json();
-console.log("Run ID:", data.runId);
-console.log("Output:", data.output);`;
-
-  const activeSnippet =
-    apiSnippetLang === "curl" ? curlSnippet : apiSnippetLang === "python" ? pythonSnippet : nodeSnippet;
-
-  if (!isOpen) return null;
+  const run = result?.data;
+  const ok = result && result.status >= 200 && result.status < 300;
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        backgroundColor: "rgba(10, 17, 30, 0.8)",
-        backdropFilter: "blur(6px)",
-        zIndex: 9999,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        className="panel"
-        style={{
-          width: "100%",
-          maxWidth: 1120,
-          maxHeight: "92vh",
-          display: "flex",
-          flexDirection: "column",
-          backgroundColor: "#0d1527",
-          border: "1px solid #1e293b",
-          boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.5)",
-          overflow: "hidden",
-          borderRadius: 12,
-          padding: 0,
-        }}
-      >
-        {/* Header */}
-        <div
-          style={{
-            padding: "18px 24px",
-            borderBottom: "1px solid #1e293b",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            background: "linear-gradient(180deg, #111e38 0%, #0d1527 100%)",
-          }}
-        >
-          <div>
-            <div className="eyebrow" style={{ color: "#38bdf8", marginBottom: 2 }}>
-              Enterprise Deployment & API Gateway
-            </div>
-            <h2 style={{ margin: 0, fontSize: 18, color: "#f8fafc", fontWeight: 600 }}>
-              Deploy & Export &ldquo;{agentName}&rdquo;
-            </h2>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            {modalTab === "package" ? (
-              <button className="btn btn-primary" onClick={downloadZip} disabled={loading || !bundle}>
-                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ marginRight: 6 }}>
-                  <path d="M8 2v8M4.5 7l3.5 3.5L11.5 7M2.5 12.5h11" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                Download Package (.zip)
-              </button>
-            ) : (
-              <a
-                href={`/api/v1/agents/${agentId}/invoke`}
-                target="_blank"
-                rel="noreferrer"
-                className="btn btn-secondary"
-                style={{ textDecoration: "none", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 6 }}
-              >
-                <span>📜</span> View OpenAPI 3.0 Spec
-              </a>
-            )}
-            <button className="btn btn-ghost" onClick={onClose} style={{ color: "#94a3b8" }}>
-              ✕
-            </button>
-          </div>
-        </div>
+    <div className="ex-body ex-call">
+      <p className="ex-lead">
+        Start a run of this agent from a script or another tool. It runs here in Agent Studio, like any other run: the published
+        version, with its connections, approvals, usage limits, and a record in Runs.
+      </p>
 
-        {/* Tab Switcher */}
-        <div style={{ display: "flex", borderBottom: "1px solid #1e293b", backgroundColor: "#090f1d", padding: "0 24px" }}>
-          <button
-            onClick={() => setModalTab("package")}
-            style={{
-              padding: "12px 16px",
-              background: "none",
-              border: "none",
-              borderBottom: modalTab === "package" ? "2px solid #38bdf8" : "2px solid transparent",
-              color: modalTab === "package" ? "#38bdf8" : "#94a3b8",
-              fontWeight: modalTab === "package" ? 600 : 500,
-              fontSize: 13,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              transition: "all 0.15s",
-            }}
-          >
-            <span>📦</span> Cloud & Container Packages
-          </button>
-          <button
-            onClick={() => setModalTab("rest_api")}
-            style={{
-              padding: "12px 16px",
-              background: "none",
-              border: "none",
-              borderBottom: modalTab === "rest_api" ? "2px solid #38bdf8" : "2px solid transparent",
-              color: modalTab === "rest_api" ? "#38bdf8" : "#94a3b8",
-              fontWeight: modalTab === "rest_api" ? 600 : 500,
-              fontSize: 13,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              transition: "all 0.15s",
-            }}
-          >
-            <span>⚡</span> Standalone REST API & cURL
-            <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, backgroundColor: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", fontWeight: 600 }}>
-              POST /invoke
-            </span>
+      <div className="ex-callout warn">
+        <AlertIcon size={15} />
+        <div>
+          <b>Calls need a signed-in Agent Studio session.</b> There are no API keys yet, so this works from a browser or script signed
+          in as you, not from another server. To run the agent from your own systems, download a package instead.
+        </div>
+      </div>
+
+      <h3 className="ex-h">Endpoint</h3>
+      <CopyLine text={`POST ${endpoint}`} copy={endpoint} />
+      {bundle && (
+        <div className="ex-facts">
+          <span>Up to {bundle.call.rateLimitRpm} calls a minute</span>
+          {bundle.call.dlp && <span>Personal data is masked on the way in and out</span>}
+          <span>Actions that need approval wait in Approvals</span>
+        </div>
+      )}
+
+      <div className="ex-two">
+        <div>
+          <h3 className="ex-h">You send</h3>
+          <dl className="ex-fields">
+            <dt><code>input</code></dt>
+            <dd>What to do, in words.</dd>
+            <dt><code>inputs</code></dt>
+            <dd>
+              {inputs.length
+                ? <>Values for its inputs: {inputs.map((i, n) => <span key={i.key}>{n > 0 && ", "}<code>{i.key}</code>{i.required && " (required)"}</span>)}.</>
+                : "Values for declared inputs. This agent declares none."}
+            </dd>
+            <dt><code>dryRun</code></dt>
+            <dd><code>true</code> to rehearse: it plans and drafts but carries out no actions.</dd>
+          </dl>
+        </div>
+        <div>
+          <h3 className="ex-h">You get back</h3>
+          <dl className="ex-fields">
+            <dt><code>status</code></dt>
+            <dd><code>completed</code>, <code>awaiting_approval</code> (an action waits in Approvals) or <code>failed</code>.</dd>
+            <dt><code>output</code></dt>
+            <dd>The agent&apos;s answer.</dd>
+            <dt><code>runId</code></dt>
+            <dd>The run, to open in Runs.</dd>
+            <dt><code>toolsCalled</code>, <code>usage</code></dt>
+            <dd>What it did, and the tokens and cost.</dd>
+          </dl>
+        </div>
+      </div>
+
+      <details className="ex-files">
+        <summary>Example (JavaScript)</summary>
+        <div className="ex-code">
+          <div className="ex-code-head">
+            <span>From a page or script signed in to Agent Studio</span>
+            <CopyButton text={example} />
+          </div>
+          <pre>{example}</pre>
+        </div>
+      </details>
+
+      <h3 className="ex-h">Try it</h3>
+      <div className="ex-try">
+        <textarea className="textarea" rows={3} value={input} placeholder="What should the agent do?" onChange={(e) => setInput(e.target.value)} />
+        <div className="ex-try-row">
+          <label className="ex-check">
+            <input type="checkbox" checked={rehearse} onChange={(e) => setRehearse(e.target.checked)} />
+            Rehearse only: carry out no actions
+          </label>
+          <button className="btn btn-primary" onClick={tryIt} disabled={busy || !input.trim()}>
+            {busy ? "Running…" : rehearse ? "Rehearse" : "Run it"}
           </button>
         </div>
-
-        {modalTab === "package" ? (
-          <>
-            {/* Cloud & Architecture Selection */}
-            <div style={{ padding: "16px 24px", borderBottom: "1px solid #1e293b", backgroundColor: "#0b1220" }}>
-              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
-                {/* Target Cloud */}
-                <div style={{ flex: 1, minWidth: 320 }}>
-                  <span className="eyebrow" style={{ display: "block", marginBottom: 6, fontSize: 11 }}>
-                    Target Cloud / Language
-                  </span>
-                  <div className="seg" style={{ display: "flex", gap: 4 }}>
-                    {CLOUD_OPTIONS.map((c) => (
-                      <button
-                        key={c.id}
-                        className={`seg-opt ${target === c.id ? "on" : ""}`}
-                        onClick={() => setTarget(c.id)}
-                        style={{ flex: 1, fontSize: 12, padding: "7px 10px", textAlign: "center" }}
-                      >
-                        {c.label.split(" ")[0]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Runtime Architecture */}
-                <div style={{ minWidth: 260 }}>
-                  <span className="eyebrow" style={{ display: "block", marginBottom: 6, fontSize: 11 }}>
-                    Runtime Architecture
-                  </span>
-                  <div className="seg" style={{ display: "flex", gap: 4 }}>
-                    <button
-                      className={`seg-opt ${runtime === "container" ? "on" : ""}`}
-                      onClick={() => setRuntime("container")}
-                      style={{ fontSize: 12, padding: "7px 12px" }}
-                    >
-                      Container Service (HTTP)
-                    </button>
-                    <button
-                      className={`seg-opt ${runtime === "serverless" ? "on" : ""}`}
-                      onClick={() => setRuntime("serverless")}
-                      style={{ fontSize: 12, padding: "7px 12px" }}
-                      disabled={target === "docker" || target === "python"}
-                    >
-                      Serverless Function
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <p className="sub-line" style={{ margin: "10px 0 0", color: "#64748b", fontSize: 12 }}>
-                {CLOUD_OPTIONS.find((c) => c.id === target)?.blurb}
-              </p>
+        {!rehearse && <p className="ex-note warn">This starts a real run. Actions that don&apos;t need approval happen straight away.</p>}
+        {result && (
+          <div className={`ex-result${ok ? "" : " bad"}`}>
+            <div className="ex-result-head">
+              <span className={`ex-pill ${ok ? (run?.status === "awaiting_approval" ? "ask" : "auto") : "off"}`}>
+                {ok ? STATUS_WORDS[run?.status] ?? "Done" : `Error ${result.status || ""}`}
+              </span>
+              {ok && run?.durationMs != null && <span className="ex-dim">{(run.durationMs / 1000).toFixed(1)}s</span>}
+              {run?.runId && <Link href={`/runs/${run.runId}`} className="ex-open">Open the run →</Link>}
             </div>
-
-            {/* Content Body: Explorer + Preview */}
-            <div style={{ display: "flex", flex: 1, minHeight: 420, maxHeight: "56vh", overflow: "hidden" }}>
-              {/* File Explorer Sidebar */}
-              <div
-                style={{
-                  width: 240,
-                  borderRight: "1px solid #1e293b",
-                  backgroundColor: "#090f1d",
-                  display: "flex",
-                  flexDirection: "column",
-                  overflowY: "auto",
-                }}
-              >
-                <div style={{ padding: "10px 14px", borderBottom: "1px solid #162032", fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>
-                  Package Files ({bundle?.files?.length || 0})
-                </div>
-                <div style={{ padding: 6, flex: 1 }}>
-                  {loading ? (
-                    <div style={{ padding: 14, color: "#64748b", fontSize: 12 }}>Compiling export...</div>
-                  ) : (
-                    bundle?.files?.map((f) => {
-                      const isSelected = activeFile?.path === f.path;
-                      return (
-                        <button
-                          key={f.path}
-                          onClick={() => setActiveFile(f)}
-                          style={{
-                            width: "100%",
-                            textAlign: "left",
-                            padding: "8px 10px",
-                            borderRadius: 6,
-                            border: "none",
-                            backgroundColor: isSelected ? "#1e293b" : "transparent",
-                            color: isSelected ? "#38bdf8" : "#94a3b8",
-                            cursor: "pointer",
-                            fontSize: 12,
-                            fontFamily: "monospace",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            marginBottom: 2,
-                            transition: "background 0.15s",
-                          }}
-                        >
-                          <span style={{ opacity: 0.6, fontSize: 11 }}>
-                            {f.path.endsWith(".sh") ? "⚡" : f.path.endsWith(".json") ? "{}" : f.path.endsWith(".md") ? "📝" : f.path.endsWith(".py") ? "🐍" : "📄"}
-                          </span>
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {f.path}
-                          </span>
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* Code Viewer Panel */}
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: "#060a12", overflow: "hidden" }}>
-                {activeFile ? (
-                  <>
-                    <div
-                      style={{
-                        padding: "8px 16px",
-                        borderBottom: "1px solid #1e293b",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        backgroundColor: "#0a101d",
-                      }}
-                    >
-                      <div>
-                        <span style={{ fontFamily: "monospace", fontSize: 13, color: "#38bdf8", fontWeight: 500 }}>
-                          {activeFile.path}
-                        </span>
-                        <span style={{ marginLeft: 12, color: "#64748b", fontSize: 11 }}>
-                          {activeFile.description}
-                        </span>
-                      </div>
-                      <button
-                        className="btn btn-ghost"
-                        onClick={() => copyText(activeFile.content, "file")}
-                        style={{ fontSize: 11, padding: "3px 8px", color: copied === "file" ? "#34d399" : "#94a3b8" }}
-                      >
-                        {copied === "file" ? "✓ Copied" : "Copy File"}
-                      </button>
-                    </div>
-
-                    <div style={{ flex: 1, overflow: "auto", padding: "12px 16px" }}>
-                      <pre
-                        style={{
-                          margin: 0,
-                          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                          fontSize: 12,
-                          lineHeight: 1.6,
-                          color: "#e2e8f0",
-                          whiteSpace: "pre",
-                        }}
-                      >
-                        <code>{activeFile.content}</code>
-                      </pre>
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#64748b" }}>
-                    {loading ? "Generating bundle..." : "Select a file to inspect"}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Footer: Secrets & Deploy Command */}
-            <div
-              style={{
-                padding: "14px 24px",
-                borderTop: "1px solid #1e293b",
-                backgroundColor: "#0b1220",
-                display: "flex",
-                flexDirection: "column",
-                gap: 10,
-              }}
-            >
-              {error && <div className="error" style={{ fontSize: 12 }}>{error}</div>}
-
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, overflowX: "auto" }}>
-                  <span style={{ fontSize: 11, color: "#64748b", whiteSpace: "nowrap", textTransform: "uppercase", fontWeight: 600 }}>
-                    Required Cloud Secrets:
-                  </span>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "nowrap" }}>
-                    {bundle?.requiredEnvVars?.map((v) => (
-                      <span
-                        key={v.key}
-                        className="tag tag-neutral mono"
-                        title={`${v.description} (e.g. ${v.hint})`}
-                        style={{ fontSize: 11, padding: "2px 6px", border: "1px solid #28374d", color: "#cbd5e1" }}
-                      >
-                        {v.key}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {bundle?.deployCommand && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
-                    <span style={{ fontSize: 11, color: "#64748b" }}>Deploy Command:</span>
-                    <code
-                      style={{
-                        backgroundColor: "#060a12",
-                        border: "1px solid #1e293b",
-                        padding: "3px 8px",
-                        borderRadius: 4,
-                        fontSize: 11,
-                        color: "#38bdf8",
-                        maxWidth: 320,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {bundle.deployCommand}
-                    </code>
-                    <button
-                      className="btn btn-ghost"
-                      onClick={() => copyText(bundle.deployCommand, "cmd")}
-                      style={{ fontSize: 11, padding: "3px 8px", color: copied === "cmd" ? "#34d399" : "#94a3b8" }}
-                    >
-                      {copied === "cmd" ? "✓ Copied" : "Copy"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
-        ) : (
-          /* Live REST API & OpenAPI View */
-          <div style={{ display: "flex", flex: 1, minHeight: 480, maxHeight: "68vh", overflow: "hidden" }}>
-            {/* Left side: Endpoint & Snippets */}
-            <div style={{ flex: 1.1, borderRight: "1px solid #1e293b", display: "flex", flexDirection: "column", backgroundColor: "#0a101d" }}>
-              {/* Endpoint Header Bar */}
-              <div style={{ padding: "16px 20px", borderBottom: "1px solid #1e293b", backgroundColor: "#0c1424" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                  <span style={{ backgroundColor: "#10b981", color: "#062817", fontWeight: 700, fontSize: 11, padding: "2px 8px", borderRadius: 4 }}>
-                    POST
-                  </span>
-                  <code style={{ fontSize: 13, color: "#f8fafc", fontFamily: "monospace", wordBreak: "break-all" }}>
-                    {endpointUrl}
-                  </code>
-                </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <span className="tag tag-neutral" style={{ fontSize: 11, color: "#94a3b8" }}>🌐 CORS Enabled</span>
-                  <span className="tag tag-neutral" style={{ fontSize: 11, color: "#38bdf8" }}>🛡️ DLP Masking Protected</span>
-                  <span className="tag tag-neutral" style={{ fontSize: 11, color: "#a78bfa" }}>⏱️ Rate Limited</span>
-                </div>
-              </div>
-
-              {/* Code Snippet Language Bar */}
-              <div style={{ padding: "10px 20px", borderBottom: "1px solid #1e293b", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div className="seg" style={{ display: "flex", gap: 4 }}>
-                  <button
-                    className={`seg-opt ${apiSnippetLang === "curl" ? "on" : ""}`}
-                    onClick={() => setApiSnippetLang("curl")}
-                    style={{ fontSize: 11, padding: "4px 10px" }}
-                  >
-                    cURL
-                  </button>
-                  <button
-                    className={`seg-opt ${apiSnippetLang === "python" ? "on" : ""}`}
-                    onClick={() => setApiSnippetLang("python")}
-                    style={{ fontSize: 11, padding: "4px 10px" }}
-                  >
-                    Python (requests)
-                  </button>
-                  <button
-                    className={`seg-opt ${apiSnippetLang === "node" ? "on" : ""}`}
-                    onClick={() => setApiSnippetLang("node")}
-                    style={{ fontSize: 11, padding: "4px 10px" }}
-                  >
-                    Node.js (fetch)
-                  </button>
-                </div>
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => copyText(activeSnippet, "snippet")}
-                  style={{ fontSize: 11, padding: "4px 10px", color: copied === "snippet" ? "#34d399" : "#94a3b8" }}
-                >
-                  {copied === "snippet" ? "✓ Copied" : "Copy Snippet"}
-                </button>
-              </div>
-
-              {/* Code Snippet Box */}
-              <div style={{ flex: 1, overflow: "auto", padding: "16px 20px", backgroundColor: "#060a12" }}>
-                <pre
-                  style={{
-                    margin: 0,
-                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                    fontSize: 12,
-                    lineHeight: 1.6,
-                    color: "#e2e8f0",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-all",
-                  }}
-                >
-                  <code>{activeSnippet}</code>
-                </pre>
-              </div>
-            </div>
-
-            {/* Right side: Interactive Invoke Tester */}
-            <div style={{ flex: 0.9, display: "flex", flexDirection: "column", backgroundColor: "#090f1d" }}>
-              <div style={{ padding: "14px 20px", borderBottom: "1px solid #1e293b", backgroundColor: "#0c1424" }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "#f8fafc" }}>⚡ Interactive Endpoint Tester</div>
-                <div style={{ fontSize: 11, color: "#64748b" }}>Test direct invocation with active DLP protection and rate limiting</div>
-              </div>
-
-              <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12, borderBottom: "1px solid #1e293b" }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 11, color: "#94a3b8", marginBottom: 6, fontWeight: 500 }}>
-                    Payload Input (Prompt / Instructions)
-                  </label>
-                  <textarea
-                    value={testInput}
-                    onChange={(e) => setTestInput(e.target.value)}
-                    rows={3}
-                    style={{
-                      width: "100%",
-                      backgroundColor: "#060a12",
-                      border: "1px solid #1e293b",
-                      borderRadius: 6,
-                      padding: "8px 10px",
-                      color: "#f8fafc",
-                      fontSize: 12,
-                      fontFamily: "monospace",
-                      resize: "vertical",
-                    }}
-                  />
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 11, color: "#64748b" }}>Version: published</span>
-                  <button
-                    className="btn btn-primary"
-                    onClick={runTestInvoke}
-                    disabled={testingApi || !testInput.trim()}
-                    style={{ fontSize: 12, padding: "6px 14px", display: "flex", alignItems: "center", gap: 6 }}
-                  >
-                    {testingApi ? "Executing..." : "Send Request 🚀"}
-                  </button>
-                </div>
-              </div>
-
-              {/* Response Inspector */}
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                <div style={{ padding: "8px 20px", borderBottom: "1px solid #162032", display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "#070c18" }}>
-                  <span style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", fontWeight: 600 }}>
-                    Live Response Payload
-                  </span>
-                  {testStatus && (
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          padding: "2px 6px",
-                          borderRadius: 4,
-                          fontWeight: 600,
-                          backgroundColor: testStatus === 200 ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
-                          color: testStatus === 200 ? "#34d399" : "#f87171",
-                        }}
-                      >
-                        HTTP {testStatus}
-                      </span>
-                      {testResponse?._durationMs && (
-                        <span style={{ fontSize: 10, color: "#64748b" }}>{testResponse._durationMs}ms</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ flex: 1, overflow: "auto", padding: "14px 20px", backgroundColor: "#060a12" }}>
-                  {testingApi ? (
-                    <div style={{ color: "#64748b", fontSize: 12, display: "flex", alignItems: "center", gap: 8 }}>
-                      <span>⏳</span> Running agent orchestrator through REST API...
-                    </div>
-                  ) : testResponse ? (
-                    <pre
-                      style={{
-                        margin: 0,
-                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                        fontSize: 11,
-                        lineHeight: 1.5,
-                        color: "#a5f3fc",
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-all",
-                      }}
-                    >
-                      <code>{JSON.stringify(testResponse, null, 2)}</code>
-                    </pre>
-                  ) : (
-                    <div style={{ color: "#64748b", fontSize: 12, textAlign: "center", marginTop: 40 }}>
-                      Click &ldquo;Send Request&rdquo; to test endpoint invocation live.
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+            <pre>{ok ? run?.output || "(no answer yet)" : run?.error || run?.message || "The call failed."}</pre>
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+const STATUS_WORDS: Record<string, string> = {
+  completed: "Completed",
+  awaiting_approval: "Waiting for approval",
+  running: "Still running",
+  failed: "Failed",
+  error: "Failed",
+};
+
+// ---- bits ----------------------------------------------------------------------------------
+
+function CopyButton({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      className="ex-copy"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setDone(true);
+          setTimeout(() => setDone(false), 1800);
+        } catch {
+          /* clipboard blocked */
+        }
+      }}
+    >
+      {done ? <CheckIcon size={12} /> : <CopyIcon size={12} />} {done ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
+function CopyLine({ text, copy }: { text: string; copy?: string }) {
+  return (
+    <div className="ex-line">
+      <code>{text}</code>
+      <CopyButton text={copy ?? text} />
     </div>
   );
 }

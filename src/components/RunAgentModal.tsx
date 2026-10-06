@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { normaliseInputs, type AgentSpec, type SpecInput } from "@/lib/types";
+import { acceptedExtensions, fileAccepted, normaliseInputs, type AgentSpec, type SpecInput } from "@/lib/types";
 
 type Props = {
   isOpen: boolean;
@@ -339,8 +339,16 @@ export default function RunAgentModal({
                           type="file"
                           id={`file-${inp.key}`}
                           style={{ display: "none" }}
+                          accept={acceptedExtensions(inp).join(",") || undefined}
                           onChange={(e) => {
                             const f = e.target.files?.[0] || null;
+                            if (f && !fileAccepted(inp, f.name)) {
+                              setError(`${inp.label} takes ${acceptedExtensions(inp).join(", ")} files; ${f.name} is not one of them.`);
+                              e.target.value = "";
+                              setFiles((prev) => ({ ...prev, [inp.key]: null }));
+                              return;
+                            }
+                            setError("");
                             setFiles((prev) => ({ ...prev, [inp.key]: f }));
                           }}
                         />

@@ -31,7 +31,14 @@ export async function GET() {
         [u.orgId],
       )
     : [];
-  return NextResponse.json({ members, invitations, canManageMembers: u.canManageMembers });
+  return NextResponse.json({
+    members,
+    invitations,
+    canManageMembers: u.canManageMembers,
+    // Who is looking: only the owner may change roles or remove people.
+    viewer: { id: u.id, isOwner: u.isOwner, role: u.role },
+    inviteDays: INVITE_DAYS,
+  });
 }
 
 /** Invite someone to this workspace. Owner and admins only. */

@@ -8,3 +8,5 @@ storage
 npm-debug.log*
 README.md
 agent-studio-README.md
+deploy/data
+.DS_Store

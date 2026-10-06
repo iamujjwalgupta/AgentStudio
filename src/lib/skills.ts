@@ -50,14 +50,15 @@ export function skillName(raw: string): string {
  * Ids that no longer resolve are dropped rather than raised. A skill deleted
  * after an agent was published must degrade that agent, not strand it — and a
  * spec carried in from another workspace by a share names ids that were never
- * ours.
+ * ours. A retired skill is dropped the same way: the agent keeps the id in its
+ * spec, so restoring the skill brings it straight back.
  */
 export async function skillsFor(orgId: string, ids: string[]): Promise<SkillRow[]> {
   const wanted = (ids || []).filter((id) => typeof id === "string" && UUID.test(id));
   if (!wanted.length) return [];
   const rows = await q<SkillRow>(
     `select id, name, label, description, instructions from skills
-      where org_id = $1 and id = any($2::uuid[])`,
+      where org_id = $1 and id = any($2::uuid[]) and status = 'active'`,
     [orgId, wanted],
   );
   const byId = new Map(rows.map((r) => [r.id, r]));

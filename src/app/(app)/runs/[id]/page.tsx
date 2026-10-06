@@ -1,3 +1,7 @@
+import "../../agents/agents.css";
+import "../../approvals/approvals.css";
+import "../../skills/skills.css";
+import "../runs.css";
 import RunView from "@/components/RunView";
 import { requireUser } from "@/lib/auth";
 

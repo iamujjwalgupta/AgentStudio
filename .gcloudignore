@@ -1,0 +1,14 @@
+# What `gcloud builds submit` does NOT upload to Cloud Build.
+.gcloudignore
+.git
+.gitignore
+node_modules
+.next
+.env
+.env.*
+!.env.example
+storage
+deploy/data
+*.tsbuildinfo
+.DS_Store
+__MACOSX

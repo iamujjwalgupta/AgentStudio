@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { one, q } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
+import { audit } from "@/lib/ai";
 import { skillsFor } from "@/lib/skills";
 import { specSkillIds, type AgentSpec } from "@/lib/types";
 import {
@@ -49,7 +50,18 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
   // Attached skills
   const skillIds = specSkillIds(spec);
-  const skills = await skillsFor(u.orgId, skillIds);
+  const granted = await skillsFor(u.orgId, skillIds);
+  // Skill content leaves the workspace only with an admin's say-so (see skill download
+  // requests). For anyone else the bundle keeps each skill's name and summary, so the
+  // agent still knows what it had, but the instructions are withheld.
+  const skills = u.canPublish
+    ? granted
+    : granted.map((s) => ({
+        ...s,
+        instructions:
+          `_Instructions withheld from this export: only workspace admins can export skill content._\n\n` +
+          `Request a download of "${s.label}" on the Skills page of Agent Studio; an admin must approve it.`,
+      }));
 
   // Available connections for mapping names
   const connections = await q<any>(`select id, name, kind from connections where org_id = $1`, [u.orgId]);
@@ -61,6 +73,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     target,
     runtime,
     skills,
+    skillsWithheld: !u.canPublish && granted.length > 0,
     connections,
   });
 
@@ -69,12 +82,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   }
 
   const zipBuffer = await createExportZip(bundle);
+  await audit(u.orgId, u, "Exported agent", "agent", id, {
+    name: bundle.agentName,
+    version: bundle.version,
+    target: bundle.target,
+    runtime: bundle.runtime,
+    skillsWithheld: !u.canPublish && granted.length > 0,
+  });
 
   return new Response(new Uint8Array(zipBuffer), {
     status: 200,
     headers: {
       "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="${bundle.slug}-${target}.zip"`,
+      "Content-Disposition": `attachment; filename="${bundle.slug}-${bundle.target}.zip"`,
       "Cache-Control": "no-store",
     },
   });

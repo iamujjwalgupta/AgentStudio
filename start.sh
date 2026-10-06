@@ -98,22 +98,9 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM EXIT
 
-# Start Next.js web application
+# Start the web app; `npm run dev` also starts the scheduler once the app is healthy.
 npm run dev &
 DEV_PID=$!
-
-# Wait for Next.js to start listening on port 3000
-echo "Waiting for web server to be ready on http://localhost:3000..."
-for i in {1..30}; do
-  if curl -s http://localhost:3000 >/dev/null 2>&1 || curl -s -I http://localhost:3000 | grep -q "HTTP" 2>/dev/null; then
-    break
-  fi
-  sleep 1
-done
-
-# Start background scheduler daemon
-npm run scheduler &
-SCHEDULER_PID=$!
 
 echo ""
 echo -e "${BOLD}${GREEN}======================================================${NC}"
@@ -125,4 +112,4 @@ echo -e "Press ${YELLOW}Ctrl+C${NC} in this window to stop all services."
 echo ""
 
 # Keep running until user terminates
-wait "$DEV_PID" "$SCHEDULER_PID"
+wait "$DEV_PID"

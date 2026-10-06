@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { q } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { canDecide, CANNOT_DECIDE, otherApproverCount } from "@/lib/approvals";
+import { toolById } from "@/lib/tools";
 
 export const runtime = "nodejs";
 
@@ -18,7 +19,7 @@ export async function GET(req: Request) {
   }
 
   const rows = await q<any>(
-    `select ap.*, r.agent_id, r.started_by, r.parent_run_id, a.name as agent_name,
+    `select ap.*, r.agent_id, r.started_by, r.parent_run_id, a.name as agent_name, left(r.input, 1200) as run_input, r.status as run_status,
             us.name as started_by_name,
             ud.name as decided_by_name,
             pa.name as parent_agent_name
@@ -45,7 +46,15 @@ export async function GET(req: Request) {
       blocked =
         "You started this run, so someone else must decide what it does. " +
         `There ${others === 1 ? "is 1 other person" : `are ${others} other people`} in this workspace who can.`;
-    return { ...r, canDecide: !blocked, blocked, selfWouldApprove: eligible && mine && others === 0 };
+    const def = toolById(r.tool);
+    return {
+      ...r,
+      tool_label: def?.label ?? r.tool,
+      tool_risk: def?.risk ?? "medium",
+      canDecide: !blocked,
+      blocked,
+      selfWouldApprove: eligible && mine && others === 0,
+    };
   });
 
   return NextResponse.json({ approvals, canDecide: eligible });

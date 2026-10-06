@@ -5,3 +5,14 @@ storage/*
 !storage/.gitkeep
 *.tsbuildinfo
 next-env.d.ts
+
+# Database dumps used by deploy/2-import-data.sh
+deploy/data/
+
+# Your own deployment settings (project, service accounts, who may sign in)
+# and access lists: kept on this machine, out of the public repository.
+deploy/config.sh
+deploy/admin-grants*
+
+# Mac Finder files
+.DS_Store

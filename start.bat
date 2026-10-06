@@ -44,14 +44,14 @@ if not exist "node_modules" (
 REM 5. Launch Web App and Scheduler
 echo.
 echo Launching Agent Studio Web App and Scheduler...
-start "Agent Studio - Scheduler" cmd /k "npm run scheduler"
-start "Agent Studio - Web App" cmd /k "npm run dev"
+REM npm run dev starts the web app and, once it is healthy, the scheduler.
+start "Agent Studio" cmd /k "npm run dev"
 
 echo.
 echo ======================================================
 echo   Agent Studio is starting!
 echo   Web App:   http://localhost:3000
-echo   Scheduler: Running in background window
+echo   Scheduler: starts automatically in the same window
 echo ======================================================
 echo.
 pause

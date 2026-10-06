@@ -1,5 +1,5 @@
 import { q, one } from "./db";
-import { anthropicFor } from "./ai";
+import { assistantTurn, engineAccess, engineOf, meteredStep, type EngineAccess } from "./models";
 import { costOf } from "./pricing";
 import { createA2ATaskEnvelope } from "./a2a/envelope";
 import { dispatchA2AMessage } from "./a2a/client";
@@ -226,8 +226,8 @@ export async function executeSwarmRun(opts: SwarmExecutionOptions): Promise<void
     return;
   }
 
-  const access = await anthropicFor(run.org_id);
-  const client = access.client;
+  // The supervisor runs on the agent's own engine, like a single agent does.
+  const access = await engineAccess(run.org_id, engineOf(spec), spec.model);
   const model = access.model;
 
   const agentRow = await one<any>(`select name from agents where id = $1`, [run.agent_id]);
@@ -237,11 +237,11 @@ export async function executeSwarmRun(opts: SwarmExecutionOptions): Promise<void
 
   try {
     if (strategy === "parallel") {
-      await executeParallelSwarm(opts, supervisorName, client, model);
+      await executeParallelSwarm(opts, supervisorName, access, model);
     } else if (strategy === "sequential") {
-      await executeSequentialSwarm(opts, supervisorName, client, model);
+      await executeSequentialSwarm(opts, supervisorName, access, model);
     } else {
-      await executeRouterSwarm(opts, supervisorName, client, model);
+      await executeRouterSwarm(opts, supervisorName, access, model);
     }
   } catch (err: any) {
     console.error(`[Swarm Orchestration Error] Run ${runId}:`, err);
@@ -262,7 +262,7 @@ export async function executeSwarmRun(opts: SwarmExecutionOptions): Promise<void
 async function executeParallelSwarm(
   opts: SwarmExecutionOptions,
   supervisorName: string,
-  client: any,
+  access: EngineAccess,
   model: string
 ) {
   const { runId, run, user } = opts;
@@ -358,11 +358,12 @@ SUPERVISOR OBJECTIVE:
 Synthesize, verify, and consolidate the specialists' contributions into a unified, high-quality, professional deliverable that comprehensively answers the original user request.
 Highlight key consensus findings, address discrepancies if any, and deliver the final result in clear GitHub-flavored Markdown.`;
 
-  const synthResponse = await client.messages.create({
-    model,
-    max_tokens: 4000,
+  const synthResponse = await meteredStep(access, {
+    system: "You consolidate the work of specialist agents into one deliverable.",
     messages: [{ role: "user", content: synthPrompt }],
-  });
+    tools: [],
+    maxTokens: 4000,
+  }, { orgId: run.org_id, feature: "agent_run", agentId: run.agent_id, runId, userId: (run as any).started_by ?? null });
 
   const finalDeliverable = synthResponse.content
     .filter((b: any) => b.type === "text")
@@ -394,7 +395,7 @@ Highlight key consensus findings, address discrepancies if any, and deliver the 
 async function executeSequentialSwarm(
   opts: SwarmExecutionOptions,
   supervisorName: string,
-  client: any,
+  access: EngineAccess,
   model: string
 ) {
   const { runId, run, user } = opts;
@@ -504,7 +505,7 @@ async function executeSequentialSwarm(
 async function executeRouterSwarm(
   opts: SwarmExecutionOptions,
   supervisorName: string,
-  client: any,
+  access: EngineAccess,
   model: string
 ) {
   const { runId, run, user } = opts;
@@ -566,13 +567,12 @@ async function executeRouterSwarm(
 
   while (steps < 10) {
     steps++;
-    const res: any = await client.messages.create({
-      model,
-      max_tokens: 3000,
+    const res = await meteredStep(access, {
       system: systemPrompt,
       messages,
       tools,
-    });
+      maxTokens: 3000,
+    }, { orgId: run.org_id, feature: "agent_run", agentId: run.agent_id, runId, userId: (run as any).started_by ?? null });
 
     inTok += res.usage?.input_tokens || 0;
     outTok += res.usage?.output_tokens || 0;
@@ -605,7 +605,7 @@ async function executeRouterSwarm(
     }
 
     // Process tool calls (a2a_dispatch)
-    messages.push({ role: "assistant", content: res.content });
+    messages.push(assistantTurn(res));
     const toolResults: any[] = [];
 
     for (const call of toolCalls) {

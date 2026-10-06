@@ -4,20 +4,26 @@ import { requireUser } from "@/lib/auth";
 import { audit } from "@/lib/ai";
 import { notify } from "@/lib/notify";
 import type { AgentSpec } from "@/lib/types";
+import { toolById } from "@/lib/tools";
 
 export const runtime = "nodejs";
 
 /** Everything the current user has been sent, and everything their workspace has sent. */
 export async function GET() {
   const u = await requireUser();
-  const incoming = await q(
+  const rows = await q<any>(
     `select id, agent_name, spec, note, status, from_user_name, from_org_name, created_at, decided_at,
-            accepted_agent_id
+            accepted_agent_id, source_version
        from agent_shares where to_user_id = $1 order by created_at desc`,
     [u.id],
   );
+  // What the agent would bring, in words: the actions it may take, by their labels.
+  const incoming = rows.map((r) => ({
+    ...r,
+    tool_labels: (r.spec?.tools ?? []).map((t: any) => toolById(t.id)?.label ?? t.id),
+  }));
   const outgoing = await q(
-    `select s.id, s.agent_name, s.note, s.status, s.created_at, s.decided_at,
+    `select s.id, s.agent_id, s.agent_name, s.note, s.status, s.created_at, s.decided_at, s.source_version,
             us.email as to_email, us.name as to_name, o.name as to_org_name
        from agent_shares s
        join users us on us.id = s.to_user_id
@@ -25,7 +31,8 @@ export async function GET() {
       where s.from_org_id = $1 order by s.created_at desc`,
     [u.orgId],
   );
-  return NextResponse.json({ incoming, outgoing });
+  // Accepting copies into the workspace being viewed, so the page names it.
+  return NextResponse.json({ incoming, outgoing, workspace: u.orgName });
 }
 
 /** Offers an agent to a user in another workspace. Nothing is copied until they accept. */

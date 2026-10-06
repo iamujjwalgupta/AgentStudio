@@ -243,3 +243,20 @@ export function VerifiedBadge({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
+
+/**
+ * The icon for a kind of connection the app uses (lib/connection-types). Email has
+ * no brand, so it gets a plain envelope; Teams uses the Microsoft mark.
+ */
+export function KindIcon({ kind, size = 22 }: { kind: string; size?: number }) {
+  if (kind === "smtp") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#00338d" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="3" y="5" width="18" height="14" rx="2" />
+        <path d="M3.5 6.5l8.5 6.5 8.5-6.5" />
+      </svg>
+    );
+  }
+  if (kind === "msteams") return <ConnectorIcon id="microsoft365" size={size} />;
+  return <ConnectorIcon id={kind} size={size} />;
+}

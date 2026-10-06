@@ -2,25 +2,35 @@ import { NextRequest, NextResponse } from "next/server";
 import { one, q } from "@/lib/db";
 import { getUser } from "@/lib/auth";
 import { startRun } from "@/lib/orchestrator";
+import { budgetCheck } from "@/lib/spend";
 import { maskPII, checkRateLimit } from "@/lib/guardrails";
 import type { AgentSpec } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
-  };
+/**
+ * Who may call this: a signed-in member of the agent's workspace, and nobody
+ * else. It used to accept any caller and any agent id, so anyone who could
+ * reach the app could run any agent, actions and all. There are no workspace
+ * API keys yet; until there are, calls need a session, and browsers are not
+ * invited to make them from other sites (no cross-origin headers).
+ */
+function corsHeaders(): Record<string, string> {
+  return {};
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    status: 204,
-    headers: corsHeaders(),
-  });
+  return new NextResponse(null, { status: 204 });
+}
+
+const unauthorised = () =>
+  NextResponse.json({ error: "Sign in to Agent Studio to call this agent." }, { status: 401, headers: corsHeaders() });
+
+/** The agent, only when it belongs to the caller's workspace; another workspace's agent reads as not found. */
+async function agentFor(agentId: string, orgId: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(agentId)) return null;
+  return one<any>(`select * from agents where id = $1 and org_id = $2`, [agentId, orgId]);
 }
 
 /**
@@ -32,7 +42,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: agentId } = await params;
-  const agent = await one<any>(`select * from agents where id = $1`, [agentId]);
+  const user = await getUser();
+  if (!user) return unauthorised();
+  const agent = await agentFor(agentId, user.orgId);
   if (!agent) {
     return NextResponse.json({ error: "Agent not found" }, { status: 404, headers: corsHeaders() });
   }
@@ -134,7 +146,9 @@ export async function POST(
   const { id: agentId } = await params;
   const t0 = Date.now();
 
-  const agent = await one<any>(`select * from agents where id = $1`, [agentId]);
+  const user = await getUser();
+  if (!user) return unauthorised();
+  const agent = await agentFor(agentId, user.orgId);
   if (!agent) {
     return NextResponse.json({ error: "Agent not found" }, { status: 404, headers: corsHeaders() });
   }
@@ -146,13 +160,9 @@ export async function POST(
     );
   }
 
-  // Resolve user authentication (Bearer token, X-API-Key, or active cookie session)
-  const authHeader = req.headers.get("authorization") || "";
-  const apiKeyHeader = req.headers.get("x-api-key") || "";
-  const user = await getUser();
-
-  const callerName = user?.name || (authHeader ? "API Token Client" : "External REST Client");
-  const callerId = user?.id || agent.org_id;
+  // The run is recorded as started by the signed-in caller.
+  const callerName = user.name;
+  const callerId = user.id;
 
   // Resolve spec
   let spec: AgentSpec = agent.draft_spec;
@@ -216,6 +226,10 @@ export async function POST(
     effectiveInput = dlpResult.text;
     dlpDetections = dlpResult.detections;
   }
+
+  // Runs started from outside meet the same usage limits as any other.
+  const budget = await budgetCheck(agent.org_id, agent.id);
+  if (!budget.ok) return NextResponse.json({ error: budget.reason }, { status: 402, headers: corsHeaders() });
 
   try {
     // Start and advance the run

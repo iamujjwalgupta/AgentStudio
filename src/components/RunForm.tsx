@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { normaliseInputs, type AgentSpec } from "@/lib/types";
+import { acceptedExtensions, fileAccepted, normaliseInputs, type AgentSpec } from "@/lib/types";
 
 /**
  * How a person actually uses an agent.
@@ -110,8 +110,22 @@ export default function RunForm({
                     <input
                       className="input"
                       type="file"
-                      onChange={(e) => setFiles({ ...files, [i.key]: e.target.files?.[0] ?? null })}
+                      accept={acceptedExtensions(i).join(",") || undefined}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] ?? null;
+                        if (f && !fileAccepted(i, f.name)) {
+                          setError(`${i.label} takes ${acceptedExtensions(i).join(", ")} files; ${f.name} is not one of them.`);
+                          e.target.value = "";
+                          setFiles({ ...files, [i.key]: null });
+                          return;
+                        }
+                        setError("");
+                        setFiles({ ...files, [i.key]: f });
+                      }}
                     />
+                    {acceptedExtensions(i).length > 0 && (
+                      <span className="sub-line" style={{ display: "block", marginTop: 5 }}>Accepts {acceptedExtensions(i).join(", ")}</span>
+                    )}
                     {files[i.key] && <span className="sub-line mono">{files[i.key]!.name}</span>}
                   </>
                 ) : i.type === "longtext" ? (
@@ -142,7 +156,7 @@ export default function RunForm({
                 )}
 
                 {i.hint && i.type !== "text" && i.type !== "number" && (
-                  <span className="help" style={{ marginTop: 5 }}>{i.hint}</span>
+                  <span className="help" style={{ display: "block", marginTop: 5 }}>{i.hint}</span>
                 )}
               </label>
             ))}

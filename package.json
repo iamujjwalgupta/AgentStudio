@@ -3,9 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/with-scheduler.mjs dev",
+    "dev:web": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node scripts/with-scheduler.mjs start",
+    "start:web": "next start",
     "typecheck": "tsc --noEmit",
     "db:setup": "node --env-file-if-exists=.env scripts/setup-db.mjs",
     "scheduler": "node --env-file-if-exists=.env scripts/scheduler.mjs",

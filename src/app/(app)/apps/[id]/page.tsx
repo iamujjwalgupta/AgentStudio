@@ -1,3 +1,4 @@
+import "../apps.css";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getApp, listApps } from "@/lib/apps";

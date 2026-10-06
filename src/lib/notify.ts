@@ -14,7 +14,14 @@ import { decrypt } from "./crypto";
  *      of a connection, so a notification that never arrived can be explained.
  */
 
-export type NotifyEvent = "approval_waiting" | "run_failed" | "share_received" | "invitation" | "spend_cap";
+export type NotifyEvent =
+  | "approval_waiting"
+  | "run_failed"
+  | "share_received"
+  | "invitation"
+  | "spend_cap"
+  | "skill_download_requested"
+  | "skill_download_decided";
 
 export type Channel = "email" | "slack";
 
@@ -25,6 +32,8 @@ const DEFAULTS: Record<NotifyEvent, Channel[]> = {
   share_received: ["email"],
   invitation: ["email"],
   spend_cap: ["email", "slack"],
+  skill_download_requested: ["email", "slack"],
+  skill_download_decided: ["email"],
 };
 
 export const EVENT_LABELS: Record<NotifyEvent, string> = {
@@ -32,7 +41,9 @@ export const EVENT_LABELS: Record<NotifyEvent, string> = {
   run_failed: "A run failed",
   share_received: "An agent was shared with you",
   invitation: "Someone was invited to the workspace",
-  spend_cap: "The spending limit was reached",
+  spend_cap: "A usage limit was nearly or fully reached",
+  skill_download_requested: "Someone asked to download a skill",
+  skill_download_decided: "Your skill download request was decided",
 };
 
 export type Message = {
@@ -144,6 +155,19 @@ export async function approverEmails(orgId: string): Promise<string[]> {
        join users us on us.id = m.user_id
        join orgs o on o.id = m.org_id
       where m.org_id = $1 and (m.role = 'approver' or o.owner_id = m.user_id)`,
+    [orgId],
+  );
+  return rows.map((r) => r.email);
+}
+
+/** The owner and admins: who decides skill download requests. */
+export async function adminEmails(orgId: string): Promise<string[]> {
+  const rows = await q<any>(
+    `select distinct us.email
+       from memberships m
+       join users us on us.id = m.user_id
+       join orgs o on o.id = m.org_id
+      where m.org_id = $1 and (m.role = 'admin' or o.owner_id = m.user_id)`,
     [orgId],
   );
   return rows.map((r) => r.email);

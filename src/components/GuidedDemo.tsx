@@ -17,182 +17,198 @@ export type TourStep = {
   actionLabel?: string;
 };
 
+/**
+ * One stop per sidebar link, top to bottom, in the sidebar's groups. Every
+ * sentence describes what the product does today — the tour is the first thing
+ * a new person reads, so it must not promise features that are not there.
+ */
 const STEPS: TourStep[] = [
   {
     id: "brand",
     target: "brand",
-    eyebrow: "Platform Overview",
+    eyebrow: "Welcome",
     title: "Welcome to Agent Studio",
     description:
-      "An enterprise no-code platform for building, orchestrating, and governing autonomous AI agents and multi-agent swarms with production tooling, real-time debugging, and strict human approval gates.",
+      "Build AI agents that do real work with your own systems and data, with people deciding the risky steps. This tour walks through the sidebar, top to bottom.",
     highlights: [
-      "Translates natural language briefs into structured, verifiable AgentSpecs",
-      "Connects to enterprise databases, APIs, MCP servers, and internal web apps",
-      "Enforces human approval gates and PII guardrails before consequential actions",
+      "Describe a job in plain words; it becomes an agent you can review and edit",
+      "Agents reach your systems only through connections you grant",
+      "Anything risky waits for a person to approve it",
     ],
   },
   {
     id: "agents",
     target: "agents",
-    eyebrow: "01 · Build",
+    eyebrow: "Build",
     path: "/agents",
-    actionLabel: "View Agents & Swarms",
-    title: "Agents, Swarms & Evals",
+    actionLabel: "Open Agents",
+    title: "Agents",
     description:
-      "The core of your autonomous workforce. Build agents with a guided six-step compiler, orchestrate multi-agent swarms, configure cron triggers, inspect live execution, and benchmark performance.",
+      "Each agent is a job written down: what it is for, the steps it follows, the actions it may take and when it runs. Drafts are safe to change; publishing makes a version live.",
     highlights: [
-      "AI brief compiler with draft vs. published versioning and visual diffs",
-      "Multi-Agent Swarm Canvas for visual supervisor-to-subagent delegation",
-      "Recurring Cron Triggers, Live Debugger with breakpoints & Eval benchmarks",
-      "1-Click REST API gateway & Python / Docker deployment exporter",
+      "Start from a short brief, then review the steps, inputs and actions it produces",
+      "Choose which actions need a person's approval before they happen",
+      "Run by hand, on a schedule, from another system, or as part of a team",
     ],
   },
   {
     id: "skills",
     target: "skills",
-    eyebrow: "02 · Build",
+    eyebrow: "Build",
     path: "/skills",
-    actionLabel: "View Skills",
-    title: "Domain Knowledge & SOPs",
+    actionLabel: "Open Skills",
+    title: "Skills",
     description:
-      "Codify how your team works. While tools define what an agent is permitted to do, skills teach it organizational procedures, tone of voice, compliance standards, and operational playbooks.",
+      "Write down how your team does a piece of work once, and attach it to any agent. An agent reads a skill only when the task in front of it calls for it.",
     highlights: [
-      "AI-assisted drafting from brief natural language descriptions",
-      "Markdown instruction editor with interactive Grid and List views",
-      "Attachable to any agent with automatic hot-reloading on next execution",
-    ],
-  },
-  {
-    id: "apps",
-    target: "apps",
-    eyebrow: "03 · Build",
-    path: "/apps",
-    actionLabel: "View Embedded Apps",
-    title: "Embedded Apps & Canvas Hub",
-    description:
-      "Embed operational web applications, internal dashboards, and external SaaS tools directly alongside your agents. Work across multi-tab split layouts with an interactive Agent Assistant.",
-    highlights: [
-      "Bi-directional window.postMessage SDK bridge for deep app-agent interactivity",
-      "Multi-Tab and Split View Canvas to run tools side-by-side with your agent",
-      "Session presets, instant bookmarking, and paired contextual agent assistant",
-    ],
-  },
-  {
-    id: "sandbox",
-    target: "sandbox",
-    eyebrow: "04 · Simulate",
-    path: "/sandbox",
-    actionLabel: "View Sandboxes",
-    title: "Multi-Framework Sandbox Hub",
-    description:
-      "Isolated simulation runtimes for Google ADK, LangGraph, Palantir Foundry AIP, and OpenAI Swarm. Test reasoning loops and promote agents directly into Agent Studio.",
-    highlights: [
-      "Universal AST decompilation across 4 leading enterprise agent frameworks",
-      "Live LLM execution traces with simulated telemetry and mock backends",
-      "One-click promotion into verified Agent Studio managed assets",
+      "Draft a skill from a short description, then edit it",
+      "See which agents use each skill",
+      "Turn a reviewer's correction into a skill straight from Approvals",
     ],
   },
   {
     id: "connections",
     target: "connections",
-    eyebrow: "05 · Build",
+    eyebrow: "Build",
     path: "/connections",
-    actionLabel: "View Connection Vault",
-    title: "Connection Vault, OAuth & MCP",
+    actionLabel: "Open Connections",
+    title: "Connections",
     description:
-      "Give agents access to real enterprise tools without compromising security. Credentials are encrypted at rest with AUTH_SECRET and safeguarded by read-only and DLP guardrails.",
+      "The systems agents can reach — databases, APIs, email, Slack, Teams, Jira, GitHub, S3 — and your Anthropic and Gemini keys. Secrets are stored encrypted.",
     highlights: [
-      "1-Click OAuth 2.0 integration for enterprise identity and third-party SaaS",
-      "Model Context Protocol (MCP) server auto-discovery & visual schema browser",
-      "Live connection health heartbeats, webhook listeners, and SQL read-only guards",
+      "Test a connection before an agent depends on it",
+      "See which agents use each connection, and what needs fixing",
+      "An agent only uses the connections it has been given",
+    ],
+  },
+  {
+    id: "sandbox",
+    target: "sandbox",
+    eyebrow: "Build",
+    path: "/sandbox",
+    actionLabel: "Open the Sandbox",
+    title: "Sandbox",
+    description:
+      "Bring in an agent built with Google ADK, LangChain, OpenAI Agents or Palantir Foundry. See what it does, test it with a real model, and add it as a draft.",
+    highlights: [
+      "The framework is detected automatically; each tool is matched to an Agent Studio action",
+      "Tests pause at every tool call so you supply the result — nothing real is called",
+      "Adds the agent as a draft, listing the connections it still needs",
+    ],
+  },
+  {
+    id: "apps",
+    target: "apps",
+    eyebrow: "Work",
+    path: "/apps",
+    actionLabel: "Open Apps",
+    title: "Apps",
+    description:
+      "Open your team's web apps and dashboards inside Agent Studio, next to your agents.",
+    highlights: [
+      "Each app loads the way it is set up — via Agent Studio, directly, or sandboxed",
+      "Ask an agent about the app you are looking at",
+      "Apps that add the bridge script can share what is on screen and ask for approvals",
     ],
   },
   {
     id: "approvals",
     target: "approvals",
-    eyebrow: "06 · Operate",
+    eyebrow: "Work",
     path: "/approvals",
-    actionLabel: "View Approvals",
-    title: "Human-in-the-Loop Governance",
+    actionLabel: "Open Approvals",
+    title: "Approvals",
     description:
-      "Enterprise governance built-in. Whenever an agent plans a medium- or high-risk action (like updating a database, sending emails, or calling external APIs), it pauses and waits for human review.",
+      "When an agent reaches an action that needs a decision — sending an email, changing data — it pauses here until someone decides.",
     highlights: [
-      "Execution state is persisted indefinitely until a decision is recorded",
-      "Approval resumes the run seamlessly; rejection prompts the agent to adapt",
-      "Full cryptographic audit trail of who approved or rejected each action",
+      "See exactly what would be sent or changed, not raw data",
+      "Approve to let it happen; reject with a note and the agent carries on without it",
+      "Where possible, someone other than the person who started the run decides",
     ],
   },
   {
     id: "runs",
     target: "runs",
-    eyebrow: "07 · Activity & Monitoring",
+    eyebrow: "Work",
     path: "/runs",
-    actionLabel: "View Run Traces",
-    title: "Observability & Step Traces",
+    actionLabel: "Open Runs",
+    title: "Runs",
     description:
-      "Inspect what your agents are doing in real time. Observe each thought, tool call, PII filter, and result in the execution loop with downloadable artifacts.",
+      "Every time an agent ran: what it was asked, each step it took, what it produced and what it cost.",
     highlights: [
-      "Live step-by-step reasoning, input/output inspection, and thought logs",
-      "Generates downloadable artifacts (CSV, PDF, XLSX, DOCX, Markdown)",
-      "Pinpoints exact prompt, tool parameters, and published version used",
+      "Filter by agent, status, trigger and period",
+      "Follow a run live as each step finishes",
+      "Copy or download the deliverable",
     ],
   },
   {
-    id: "spend",
-    target: "spend",
-    eyebrow: "08 · Activity & Monitoring",
-    path: "/spend",
-    actionLabel: "View Spend Analytics",
-    title: "Spend Caps & Cost Intelligence",
+    id: "usage",
+    target: "usage",
+    eyebrow: "Oversee",
+    path: "/usage",
+    actionLabel: "Open Usage & limits",
+    title: "Usage & limits",
     description:
-      "Keep cost and token utilization under strict control. Track model token expenditure, configure monthly workspace budget caps, and analyze cost efficiency.",
+      "Every model call on the Anthropic and Gemini keys is counted. Set limits in tokens or dollars, per month or per day, on a key or on one agent.",
     highlights: [
-      "Real-time USD tracking broken down by model, agent, and daily timeline",
-      "Hard spend cap thresholds that prevent runaway agent loops and overages",
-      "Cost economics breakdown comparing frontier vs. specialized models",
+      "Tokens and cost by key, agent, feature, person and model",
+      "At a limit, new model calls stop; owner and admins are told at 80% and 100%",
+      "A month-end projection and a CSV export",
     ],
   },
   {
     id: "audit",
     target: "audit",
-    eyebrow: "09 · Activity & Monitoring",
+    eyebrow: "Oversee",
     path: "/audit",
-    actionLabel: "View Audit Trail",
-    title: "Immutable Audit Trail",
+    actionLabel: "Open the Audit trail",
+    title: "Audit trail",
     description:
-      "Comprehensive enterprise security and compliance log. Audit every administrative event, credential change, agent deployment, and human approval decision.",
+      "Who did what, and when — every change to agents, skills and connections, every run, publish, approval and sign-in. Nothing in it can be edited.",
     highlights: [
-      "Append-only, tamper-resistant log recording all agent and security events",
-      "Actor attribution with exact timestamps, IP/user context, and event details",
-      "Exportable logs ready for enterprise SIEM ingestion and SOC2 audits",
+      "Search and filter by person, category and period",
+      "Open any event for its details and that item's history",
+      "Export what you have filtered as CSV",
+    ],
+  },
+  {
+    id: "members",
+    target: "members",
+    eyebrow: "Workspace",
+    path: "/members",
+    actionLabel: "Open Members",
+    title: "Members",
+    description: "Who is in this workspace and what each person may do.",
+    highlights: [
+      "Invite people by email as an admin, builder or approver",
+      "See exactly what each role can do",
+      "Only the owner can change roles or remove people",
     ],
   },
   {
     id: "shares",
     target: "shares",
-    eyebrow: "Workspace Collaboration",
+    eyebrow: "Workspace",
     path: "/shares",
-    actionLabel: "View Shares & Team",
-    title: "Agent Sharing & Workspace Permissions",
-    description:
-      "Collaborate across your team with fine-grained access control. Share agents with specific colleagues or departments, review pending invites, and manage workspace membership.",
+    actionLabel: "Open Shares",
+    title: "Shares",
+    description: "Send an agent to someone in another workspace, or accept one sent to you.",
     highlights: [
-      "Granular agent sharing with custom permissions (View or Edit)",
-      "Pending invitation badges with 1-click acceptance or revocation",
-      "Workspace member administration with role-based access control",
+      "It arrives as a draft copy — connections and credentials are never sent",
+      "Nothing is added until the recipient accepts",
+      "The sender can withdraw a share until it is accepted",
     ],
   },
   {
     id: "foot",
     target: "foot",
-    eyebrow: "Workspaces & Help",
-    title: "Workspaces & On-Demand Demo",
-    description:
-      "You are ready to build! Switch between organization workspaces, manage your active session, or relaunch this Guided Demo anytime from the sidebar footer.",
+    eyebrow: "That's it",
+    title: "You're ready",
+    description: "Who you are signed in as, and this tour — relaunch it any time from Guided Demo.",
     highlights: [
-      "Multi-workspace switching with isolated agents, credentials, and runs",
-      "Relaunch this tour at any time by clicking 'Guided Demo' in the sidebar footer",
-      "Keyboard shortcuts: use arrow keys (← / →) to navigate and Esc to exit",
+      "Switch workspace from the card at the top of the sidebar",
+      "Shrink the sidebar to icons with the arrow button beside the name",
+      "Use ← and → to move through the tour, and Esc to close it",
     ],
   },
 ];
@@ -251,6 +267,9 @@ export default function GuidedDemo() {
   const [index, setIndex] = useState(0);
   const [targetBox, setTargetBox] = useState<Box | null>(null);
   const [cardPos, setCardPos] = useState<{ top: number; left: number }>({ top: 100, left: 320 });
+  const [steps, setSteps] = useState<TourStep[]>(STEPS);
+  const visibleSteps = () =>
+    typeof document === "undefined" ? STEPS : STEPS.filter((s) => document.querySelector(`[data-tour="${s.target}"]`));
 
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -277,6 +296,7 @@ export default function GuidedDemo() {
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
       setWelcomeOpen(false);
+      setSteps(visibleSteps());
       setIndex(0);
       setActive(true);
     };
@@ -288,7 +308,7 @@ export default function GuidedDemo() {
   // Measure and position spotlight and card
   const measure = useCallback(() => {
     if (!active) return;
-    const step = STEPS[index];
+    const step = steps[index];
     if (!step) return;
 
     const el = document.querySelector(`[data-tour="${step.target}"]`);
@@ -322,12 +342,12 @@ export default function GuidedDemo() {
     top = Math.max(24, Math.min(top, winH - cardH - 24));
 
     setCardPos({ top, left });
-  }, [active, index]);
+  }, [active, index, steps]);
 
   // Scroll target element into view and smoothly track position
   useEffect(() => {
     if (!active) return;
-    const step = STEPS[index];
+    const step = steps[index];
     if (!step) return;
 
     const el = document.querySelector(`[data-tour="${step.target}"]`) as HTMLElement | null;
@@ -365,7 +385,7 @@ export default function GuidedDemo() {
     return () => {
       if (animId) cancelAnimationFrame(animId);
     };
-  }, [active, index, measure]);
+  }, [active, index, measure, steps]);
 
   // Re-measure when step changes, window resizes, or pathname changes
   useEffect(() => {
@@ -398,13 +418,14 @@ export default function GuidedDemo() {
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, welcomeOpen, index]);
+  }, [active, welcomeOpen, index, steps]);
 
   function startTour() {
     if (window.scrollY > 0) {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
     setWelcomeOpen(false);
+    setSteps(visibleSteps());
     setIndex(0);
     setActive(true);
   }
@@ -426,7 +447,7 @@ export default function GuidedDemo() {
   }
 
   function next() {
-    if (index < STEPS.length - 1) {
+    if (index < steps.length - 1) {
       setIndex(index + 1);
     } else {
       closeTour();
@@ -445,7 +466,7 @@ export default function GuidedDemo() {
     }
   }
 
-  const step = STEPS[index];
+  const step = steps[index];
 
   return (
     <>
@@ -463,41 +484,27 @@ export default function GuidedDemo() {
               Welcome to Agent Studio
             </div>
             <h2 id="welcome-title" className="tour-welcome-title">
-              Autonomous agents, built with real tools and real governance.
+              Agents that do real work — with people in control.
             </h2>
             <p className="tour-welcome-sub">
-              New here? Take a quick 1-minute guided demo to get familiar with navigating the platform, building agents, and setting up guardrails.
+              New here? A one-minute tour walks through the sidebar and what each part is for.
             </p>
 
             <div className="tour-welcome-features">
-              <div className="tour-wf-item">
-                <span className="tour-wf-code mono">01</span>
-                <div>
-                  <strong>Agents, Swarms &amp; Automated Evals</strong>
-                  <p className="sub-line">Compile briefs into specs, orchestrate supervisor swarms, schedule cron triggers, and benchmark regression suites.</p>
+              {[
+                ["Build", "Describe a job in plain words, review the steps and actions it produces, and publish when it is right."],
+                ["Connect", "Give agents your databases, APIs, email and messaging — secrets are stored encrypted."],
+                ["Control", "Risky actions wait for a person's approval, and usage limits cap model spend."],
+                ["Oversee", "Every run, step, cost and decision is recorded, and nothing in the audit trail can be edited."],
+              ].map(([t, d], i) => (
+                <div key={t} className="tour-wf-item">
+                  <span className="tour-wf-code mono">{String(i + 1).padStart(2, "0")}</span>
+                  <div>
+                    <strong>{t}</strong>
+                    <p className="sub-line">{d}</p>
+                  </div>
                 </div>
-              </div>
-              <div className="tour-wf-item">
-                <span className="tour-wf-code mono">02</span>
-                <div>
-                  <strong>Embedded Canvas Apps &amp; Bi-directional Bridge</strong>
-                  <p className="sub-line">Run external and internal tools in split-view tabs with an active agent assistant and JS bridge SDK.</p>
-                </div>
-              </div>
-              <div className="tour-wf-item">
-                <span className="tour-wf-code mono">03</span>
-                <div>
-                  <strong>Enterprise Vault, OAuth &amp; MCP Superpowers</strong>
-                  <p className="sub-line">Encrypted connections, 1-click OAuth 2.0, MCP auto-discovery, live heartbeats, and webhooks.</p>
-                </div>
-              </div>
-              <div className="tour-wf-item">
-                <span className="tour-wf-code mono">04</span>
-                <div>
-                  <strong>Human Governance, DLP Masking &amp; Audit Trail</strong>
-                  <p className="sub-line">Consequential action approvals, PII redaction guardrails, spend caps, and tamper-resistant audit logs.</p>
-                </div>
-              </div>
+              ))}
             </div>
 
             <div className="tour-welcome-foot">
@@ -505,7 +512,7 @@ export default function GuidedDemo() {
                 Explore on my own
               </button>
               <button className="btn btn-primary" onClick={startTour} autoFocus>
-                Start Guided Demo →
+                Take the tour →
               </button>
             </div>
           </div>
@@ -555,7 +562,7 @@ export default function GuidedDemo() {
                 {step.eyebrow}
               </div>
               <div className="tour-counter mono">
-                {index + 1} <span className="dim">/ {STEPS.length}</span>
+                {index + 1} <span className="dim">of {steps.length}</span>
               </div>
             </div>
 
@@ -591,12 +598,13 @@ export default function GuidedDemo() {
             {/* Navigation Foot */}
             <div className="tour-card-foot">
               <div className="tour-dots" role="tablist" aria-label="Tour progress">
-                {STEPS.map((_, i) => (
+                {steps.map((st, i) => (
                   <button
-                    key={i}
-                    className={`tour-dot ${i === index ? "active" : ""}`}
+                    key={st.id}
+                    className={`tour-dot ${i === index ? "active" : ""} ${i < index ? "done" : ""}`}
                     onClick={() => setIndex(i)}
-                    aria-label={`Go to step ${i + 1}`}
+                    aria-label={`Go to ${st.title}`}
+                    title={st.title}
                   />
                 ))}
               </div>
@@ -623,7 +631,7 @@ export default function GuidedDemo() {
                   onClick={next}
                   style={{ fontSize: 12, padding: "5px 14px" }}
                 >
-                  {index === STEPS.length - 1 ? "Finish Tour" : "Next →"}
+                  {index === steps.length - 1 ? "Finish" : "Next →"}
                 </button>
               </div>
             </div>

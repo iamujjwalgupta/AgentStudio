@@ -330,6 +330,39 @@ create table if not exists skills (
 create unique index if not exists uniq_skill_name_per_org on skills (org_id, name);
 create index if not exists idx_skills_org on skills (org_id, updated_at desc);
 
+-- Retiring a skill takes it out of use without losing it: agents holding it carry
+-- on without it until it is restored. Deleting is the permanent alternative.
+alter table skills add column if not exists status text not null default 'active'
+  check (status in ('active', 'retired'));
+alter table skills add column if not exists retired_at timestamptz;
+
+-- Taking a skill out of the workspace as a file is for the owner and admins. Anyone
+-- else asks: an admin approves or rejects, and an approval allows one download of
+-- the skill exactly as it was when approved (the snapshot), within seven days.
+create table if not exists skill_download_requests (
+  id                uuid primary key default gen_random_uuid(),
+  org_id            uuid not null references orgs(id) on delete cascade,
+  skill_id          uuid references skills(id) on delete set null,
+  skill_label       text not null,
+  requested_by      uuid not null references users(id) on delete cascade,
+  requested_by_name text not null,
+  reason            text not null,
+  status            text not null default 'pending'
+                    check (status in ('pending','approved','rejected','downloaded','expired')),
+  decided_by        uuid references users(id) on delete set null,
+  decided_by_name   text,
+  decided_at        timestamptz,
+  decision_note     text,
+  snapshot          jsonb,
+  expires_at        timestamptz,
+  downloaded_at     timestamptz,
+  created_at        timestamptz not null default now()
+);
+create index if not exists idx_skill_dl_org on skill_download_requests (org_id, status, created_at desc);
+-- One open request per person per skill.
+create unique index if not exists uniq_skill_dl_pending on skill_download_requests (skill_id, requested_by)
+  where status = 'pending';
+
 -- Embedded Web Applications: external portals, custom agent interfaces,
 -- dashboards, and operational tools embedded directly in Agent Studio canvas.
 create table if not exists apps (
@@ -358,3 +391,73 @@ create table if not exists workspace_hidden_apps (
   primary key (org_id, app_id)
 );
 create index if not exists idx_workspace_hidden_apps_org on workspace_hidden_apps (org_id);
+
+-- ── Token metering ───────────────────────────────────────────────────────────
+-- One row per model call, whatever made it: an agent run, drafting an agent,
+-- writing a skill, the web-search action, the sandbox, a key test. Limits are
+-- checked against these rows before every call (lib/metering.ts).
+create table if not exists usage_events (
+  id                 bigserial primary key,
+  org_id             uuid not null references orgs(id) on delete cascade,
+  provider           text not null check (provider in ('anthropic', 'gemini')),
+  model              text not null default '',
+  feature            text not null,
+  agent_id           uuid references agents(id) on delete set null,
+  run_id             uuid references runs(id) on delete set null,
+  user_id            uuid references users(id) on delete set null,
+  input_tokens       int not null default 0,
+  output_tokens      int not null default 0,
+  cache_read_tokens  int not null default 0,
+  cache_write_tokens int not null default 0,
+  cost_usd           numeric(12,6) not null default 0,
+  at                 timestamptz not null default now()
+);
+create index if not exists idx_usage_events_org_at on usage_events (org_id, at desc);
+create index if not exists idx_usage_events_run on usage_events (run_id);
+create index if not exists idx_usage_events_agent on usage_events (agent_id, at desc);
+
+-- Limits on a model key ('provider' scope, target anthropic|gemini) or on one
+-- agent ('agent' scope, target its id), per calendar month or day in the
+-- workspace timezone. Either or both of tokens and dollars; whichever is hit first.
+create table if not exists usage_limits (
+  org_id     uuid not null references orgs(id) on delete cascade,
+  scope      text not null check (scope in ('provider', 'agent')),
+  target     text not null,
+  period     text not null default 'month' check (period in ('month', 'day')),
+  max_tokens bigint,
+  max_usd    numeric(12,2),
+  updated_by text,
+  updated_at timestamptz not null default now(),
+  primary key (org_id, scope, target, period)
+);
+
+-- Each threshold (80% and 100%) is announced once per limit per period.
+create table if not exists usage_alerts (
+  id           bigserial primary key,
+  org_id       uuid not null references orgs(id) on delete cascade,
+  scope        text not null,
+  target       text not null,
+  period       text not null,
+  level        int not null,
+  period_start timestamptz not null,
+  detail       text not null default '',
+  at           timestamptz not null default now(),
+  unique (org_id, scope, target, period, level, period_start)
+);
+create index if not exists idx_usage_alerts_org_at on usage_alerts (org_id, at desc);
+
+-- Runs from before the ledger existed, one row each, so history is not lost.
+insert into usage_events (org_id, provider, model, feature, agent_id, run_id, user_id,
+                          input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, at)
+select r.org_id, 'anthropic', coalesce(r.model, ''), 'agent_run', r.agent_id, r.id, r.started_by,
+       r.input_tokens, r.output_tokens, r.cache_read_tokens, r.cache_write_tokens, r.cost_usd, r.started_at
+  from runs r
+ where (r.input_tokens + r.output_tokens) > 0
+   and not exists (select 1 from usage_events e where e.run_id = r.id);
+
+-- The old workspace spending cap becomes the Anthropic key's monthly dollar limit.
+insert into usage_limits (org_id, scope, target, period, max_usd, updated_by)
+select o.id, 'provider', 'anthropic', 'month', o.monthly_cap_usd, 'Carried over from Spend'
+  from orgs o
+ where o.monthly_cap_usd is not null
+on conflict do nothing;

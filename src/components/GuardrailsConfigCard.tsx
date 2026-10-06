@@ -43,9 +43,8 @@ export default function GuardrailsConfigCard({ spec, onChange }: GuardrailsConfi
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ fontSize: "20px" }}>🛡️</span>
-            <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 600, color: "#0f172a" }}>
-              Enterprise Data Loss Prevention (DLP) & PII Masking
+            <h3 style={{ margin: 0, fontSize: "14px", fontWeight: 600, color: "var(--text)" }}>
+              Mask personal and sensitive data
             </h3>
           </div>
           <p style={{ margin: "4px 0 0", fontSize: "12.5px", color: "#64748b", lineHeight: 1.5 }}>
@@ -187,7 +186,7 @@ export default function GuardrailsConfigCard({ spec, onChange }: GuardrailsConfi
       <div className="dlp-tester-box">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "6px" }}>
           <span style={{ fontSize: "11.5px", fontWeight: 700, color: "#005eb8", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-            🧪 Live Interactive DLP Masking Simulator
+            Try it on sample text
           </span>
           <span style={{ fontSize: "11px", color: "#475569", fontWeight: 500 }}>
             {testDlpResult.hasRedactions ? `Redacted ${testDlpResult.detections.length} pattern(s)` : "No active redactions"}
@@ -204,7 +203,7 @@ export default function GuardrailsConfigCard({ spec, onChange }: GuardrailsConfi
         />
 
         <div style={{ fontSize: "10.5px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "4px" }}>
-          REAL-TIME MASKED LLM INPUT:
+          What the model sees
         </div>
         <div className="dlp-preview-output">
           {testDlpResult.text}

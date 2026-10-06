@@ -65,7 +65,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const draft = await synthesizeSkillFromCorrection(u.orgId, ctx);
+    const draft = await synthesizeSkillFromCorrection(u.orgId, ctx, u.id);
     return NextResponse.json({ draft, agentId: targetAgentId });
   } catch (err: any) {
     return NextResponse.json(

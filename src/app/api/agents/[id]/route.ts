@@ -5,6 +5,7 @@ import { audit } from "@/lib/ai";
 import { syncAgentSchedule } from "@/lib/agent-schedule";
 import { skillsFor } from "@/lib/skills";
 import { specSkillIds } from "@/lib/types";
+import { canDeleteAgent, deleteDeniedReason } from "@/lib/agent-perms";
 
 export const runtime = "nodejs";
 
@@ -51,17 +52,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 /**
  * Deleting an agent takes its versions, runs, run steps and approvals with it.
  * Two gates, both enforced here and not merely hidden in the UI: the caller must
- * own the workspace, and must re-enter their password.
+ * be allowed to delete this agent (lib/agent-perms: an admin, or its creator
+ * while it has never been published), and must re-enter their password.
  */
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const u = await requireUser();
   const { id } = await params;
 
-  if (!u.isOwner) {
-    return NextResponse.json(
-      { error: "Only the workspace owner can delete an agent." },
-      { status: 403 },
-    );
+  const target = await one<any>(`select name, owner_id, published_ver from agents where id = $1 and org_id = $2`, [id, u.orgId]);
+  if (!target) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!canDeleteAgent(u, target)) {
+    return NextResponse.json({ error: deleteDeniedReason(u, target) }, { status: 403 });
   }
 
   const { password } = await req.json().catch(() => ({ password: "" }));
@@ -74,12 +75,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     return NextResponse.json({ error: "That password is not correct." }, { status: 403 });
   }
 
-  const agent = await one<any>(`select name from agents where id = $1 and org_id = $2`, [id, u.orgId]);
-  if (!agent) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
   const runs = await one<any>(`select count(*)::int as n from runs where agent_id = $1`, [id]);
   await q(`delete from agents where id = $1 and org_id = $2`, [id, u.orgId]);
   // Written after the delete so the audit trail outlives the agent it describes.
-  await audit(u.orgId, u, "Deleted agent", "agent", id, { name: agent.name, runsRemoved: runs?.n ?? 0 });
-  return NextResponse.json({ ok: true, name: agent.name });
+  await audit(u.orgId, u, "Deleted agent", "agent", id, {
+    name: target.name,
+    runsRemoved: runs?.n ?? 0,
+    wasPublished: target.published_ver != null,
+  });
+  return NextResponse.json({ ok: true, name: target.name });
 }

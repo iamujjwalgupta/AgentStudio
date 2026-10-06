@@ -1,7 +1,9 @@
 import crypto from "crypto";
 
 const rawSecret = process.env.AUTH_SECRET;
-if (!rawSecret && process.env.NODE_ENV === "production") {
+// Skipped only while `next build` collects page data; the running server always checks.
+const isBuild = process.env.NEXT_PHASE === "phase-production-build";
+if (!rawSecret && process.env.NODE_ENV === "production" && !isBuild) {
   throw new Error("CRITICAL SECURITY ERROR: AUTH_SECRET environment variable must be set in production.");
 }
 

@@ -1,22 +1,21 @@
+import "./agents.css";
+import "./export.css";
 import Link from "next/link";
-import { q } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
+import { listAgentsPage, type AgentListPage } from "@/lib/agent-list";
 import NewAgentButton from "@/components/NewAgentButton";
-import AgentList, { type AgentRow } from "@/components/AgentList";
+import AgentList from "@/components/AgentList";
 
 export const dynamic = "force-dynamic";
 
 export default async function AgentsPage() {
   const u = await requireUser();
-  let agents: AgentRow[] = [];
+  // Only the first page is rendered here; the list fetches further pages, searches
+  // and filters from /api/agents/list rather than receiving every agent up front.
+  let initial: AgentListPage | null = null;
   let dbError: string | null = null;
   try {
-    agents = await q<AgentRow>(
-      `select a.*, (select count(*)::int from runs r where r.agent_id = a.id) as run_count,
-              (select max(started_at) from runs r where r.agent_id = a.id) as last_run
-       from agents a where a.org_id = $1 order by a.updated_at desc`,
-      [u.orgId],
-    );
+    initial = await listAgentsPage(u.orgId, {});
   } catch (e: any) {
     dbError = e.message;
   }
@@ -27,7 +26,9 @@ export default async function AgentsPage() {
         <div>
           <div className="eyebrow">Agent Studio</div>
           <h1>Agents</h1>
-          <p className="sub">Describe work in plain language. Publish it as an agent that runs with the tools you grant it.</p>
+          <p className="sub" style={{ maxWidth: "none" }}>
+            Describe work in plain language. Publish it as an agent that runs with the tools you grant it.
+          </p>
         </div>
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
           <Link href="/sandbox" className="btn btn-ghost" style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
@@ -36,7 +37,7 @@ export default async function AgentsPage() {
               <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
               <line x1="12" y1="22.08" x2="12" y2="12" />
             </svg>
-            Explore Sandboxes
+            Import an agent
           </Link>
           <NewAgentButton />
         </div>
@@ -44,14 +45,14 @@ export default async function AgentsPage() {
 
       {dbError && <div className="error">The database is not reachable: {dbError}</div>}
 
-      {!dbError && agents.length === 0 ? (
+      {!dbError && initial && initial.totalAll === 0 ? (
         <div className="empty">
           <h3>Nothing here yet</h3>
           <p>Start with something you do every week. Describe it once and it runs on its own.</p>
           <NewAgentButton />
         </div>
       ) : (
-        !dbError && <AgentList agents={agents} canDelete={u.isOwner} timezone={u.timezone} />
+        !dbError && initial && <AgentList initial={initial} me={{ id: u.id, canPublish: u.canPublish }} timezone={u.timezone} />
       )}
     </div>
   );

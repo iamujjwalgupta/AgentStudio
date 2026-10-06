@@ -119,7 +119,7 @@ export function unattendedNotes(spec: {
     return [
       `this agent asks for ${needs} input${needs === 1 ? "" : "s"} at run time ` +
         `and a scheduled run has nobody to supply ${needs === 1 ? "it" : "them"} ` +
-        `— set a standing input on the Trigger step`,
+        `— set a standing input on the Schedule step`,
     ];
   }
   return [];

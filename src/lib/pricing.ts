@@ -24,6 +24,14 @@ export const RATES: Record<string, Rate> = {
   "claude-sonnet-5": { input: 2, output: 10 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
   "claude-haiku-4-5": { input: 1, output: 5 },
+  // Google Gemini, per million tokens (standard tier, prompts under 200k tokens).
+  // An estimate for the dashboard; Google's invoice is the record.
+  "gemini-2.5-pro": { input: 1.25, output: 10 },
+  "gemini-2.5-flash": { input: 0.3, output: 2.5 },
+  "gemini-2.5-flash-lite": { input: 0.1, output: 0.4 },
+  "gemini-2.0-flash": { input: 0.1, output: 0.4 },
+  "gemini-1.5-pro": { input: 1.25, output: 5 },
+  "gemini-1.5-flash": { input: 0.075, output: 0.3 },
 };
 
 /** Used when the configured model is not in the table, so spend is never silently zero. */
@@ -34,7 +42,9 @@ const CACHE_READ_MULTIPLIER = 0.1;
 
 export function rateFor(model: string): { rate: Rate; known: boolean } {
   const rate = RATES[model];
-  return rate ? { rate, known: true } : { rate: RATES[FALLBACK_MODEL], known: false };
+  if (rate) return { rate, known: true };
+  // An unlisted Gemini model is priced like Flash rather than like Claude.
+  return { rate: RATES[model.startsWith("gemini") ? "gemini-2.5-flash" : FALLBACK_MODEL], known: false };
 }
 
 export type Usage = {

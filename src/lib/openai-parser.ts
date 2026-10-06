@@ -145,14 +145,15 @@ export function parseOpenAIAgent(rawSource: string, forcedLanguage?: "python" | 
       throw new Error(`Invalid JSON syntax in OpenAI agent: ${err.message}`);
     }
   } else {
-    const nameMatch = rawSource.match(/name\s*=\s*["']([^"']+)["']/i);
+    // Both Agent(name="…") and a dict literal {"name": "…"}.
+    const nameMatch = rawSource.match(/["']?\bname["']?\s*[=:]\s*["']([^"'\n]+)["']/i);
     if (nameMatch) name = nameMatch[1].trim();
 
-    const modelMatch = rawSource.match(/model\s*=\s*["']([^"']+)["']/i);
+    const modelMatch = rawSource.match(/["']?\bmodel["']?\s*[=:]\s*["']([^"'\n]+)["']/i);
     if (modelMatch) model = modelMatch[1].trim();
 
-    const instMatch = rawSource.match(/(?:instructions|instruction)\s*=\s*"""([\s\S]*?)"""/);
-    if (instMatch) instruction = instMatch[1].trim();
+    const instMatch = rawSource.match(/["']?\binstructions?["']?\s*[=:]\s*(?:"""([\s\S]*?)"""|'''([\s\S]*?)''')/);
+    if (instMatch) instruction = (instMatch[1] ?? instMatch[2] ?? "").trim();
     else instruction = "Execute OpenAI Swarm agent instructions.";
 
     // Functions

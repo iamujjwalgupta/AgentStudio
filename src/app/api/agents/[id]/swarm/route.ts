@@ -3,6 +3,7 @@ import { q, one } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { audit } from "@/lib/ai";
 import { startRun } from "@/lib/orchestrator";
+import { budgetCheck } from "@/lib/spend";
 
 export const runtime = "nodejs";
 
@@ -64,6 +65,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // 2. If dispatching a swarm run
   if (action === "dispatch") {
+    const budget = await budgetCheck(u.orgId, agent.id);
+    if (!budget.ok) return NextResponse.json({ error: budget.reason }, { status: 402 });
     const prompt = input || `Execute multi-agent swarm task: ${agent.name} acting as Supervisor Coordinator.`;
     const runId = await startRun({
       orgId: u.orgId,

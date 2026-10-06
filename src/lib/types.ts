@@ -20,7 +20,34 @@ export type SpecInput = {
   required: boolean;
   /** For type "choice". */
   options?: string[];
+  /** For type "file": the kinds of file accepted, by FILE_KINDS id. Empty or absent means any readable file. */
+  accept?: string[];
 };
+
+/**
+ * The files an agent can actually read: what the document reader parses
+ * (lib/tools.ts parseDocument). Excel is not among them, so it is not offered.
+ */
+export const FILE_KINDS: { id: string; label: string; exts: string[] }[] = [
+  { id: "csv", label: "CSV", exts: [".csv", ".tsv"] },
+  { id: "pdf", label: "PDF", exts: [".pdf"] },
+  { id: "word", label: "Word", exts: [".docx"] },
+  { id: "text", label: "Text", exts: [".txt", ".md", ".json"] },
+];
+
+/** The extensions a file input takes, for an <input accept>. Empty when any readable file will do. */
+export function acceptedExtensions(input: Pick<SpecInput, "accept">): string[] {
+  const ids = input.accept ?? [];
+  return FILE_KINDS.filter((k) => ids.includes(k.id)).flatMap((k) => k.exts);
+}
+
+/** Whether a chosen file fits the input. With no restriction, anything goes. */
+export function fileAccepted(input: Pick<SpecInput, "accept">, fileName: string): boolean {
+  const exts = acceptedExtensions(input);
+  if (!exts.length) return true;
+  const lower = fileName.toLowerCase();
+  return exts.some((e) => lower.endsWith(e));
+}
 
 export const INPUT_TYPES: { id: InputType; label: string; blurb: string }[] = [
   { id: "text", label: "Text", blurb: "A short answer" },
@@ -71,6 +98,7 @@ export function normaliseInputs(raw: any[]): SpecInput[] {
       type: (i?.type as InputType) || guessed,
       required: i?.required ?? false,
       ...(Array.isArray(i?.options) ? { options: i.options } : {}),
+      ...(Array.isArray(i?.accept) && i.accept.length ? { accept: i.accept } : {}),
     };
   });
 }
@@ -89,6 +117,18 @@ export type AgentSpec = {
   sources: SpecSource[];
   steps: string[];
   tools: SpecTool[];
+  /**
+   * The model the agent runs on: Claude through Anthropic, or Gemini through
+   * Google. Unset means Claude, which is what every agent ran on before the
+   * choice existed. The workspace needs a key for whichever it is.
+   */
+  engine?: "anthropic" | "gemini";
+  /**
+   * A model for this agent only, e.g. "gemini-2.5-pro" for a heavy agent while
+   * the workspace default stays cheaper. Unset uses the model on the engine's
+   * key in Connections.
+   */
+  model?: string;
   /**
    * Skills granted to this agent, by id. Instructions rather than capability:
    * the runtime lists their names and one-line descriptions in the system

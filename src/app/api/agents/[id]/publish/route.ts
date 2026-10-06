@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { audit } from "@/lib/ai";
 import { toolById } from "@/lib/tools";
 import { syncAgentSchedule } from "@/lib/agent-schedule";
+import { ENGINE_LABEL, engineAccess, engineOf } from "@/lib/models";
 import type { AgentSpec } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -54,6 +55,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const spec = agent.draft_spec as AgentSpec;
   const fails = validate(spec, connKindById);
+  // Published means anyone can run it, so the model it runs on must be reachable.
+  const engine = engineOf(spec);
+  await engineAccess(u.orgId, engine).catch(() =>
+    fails.push(`It runs on ${ENGINE_LABEL[engine]}, and this workspace has no key for it. Add one under Connections, or choose the other model in the Brief step.`),
+  );
   if (fails.length) return NextResponse.json({ error: fails.join(" ") }, { status: 400 });
 
   const next = (agent.published_ver || 0) + 1;

@@ -3,20 +3,22 @@ import { q, one } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { audit } from "@/lib/ai";
 import { skillName, LABEL_MAX, DESCRIPTION_MAX, INSTRUCTIONS_MAX } from "@/lib/skills";
+import { myLatestRequests, DOWNLOAD_WINDOW_DAYS } from "@/lib/skill-downloads";
 
 export const runtime = "nodejs";
 
 /**
  * Skills are workspace-wide and hold no credentials, so any member may read
- * them and any member may write one — the same footing as connections. Note
- * that editing a skill changes how every published agent holding it behaves on
- * its next run, without going through publish. That is the point of a shared
- * skill, but it means writes are audited.
+ * them and any member may write a new one. Editing an existing skill changes how
+ * every published agent holding it behaves on its next run, without going through
+ * publish, so edits (and copying a skill out as a download) are reserved for the
+ * owner and admins, and writes are audited.
  */
 export async function GET() {
   const u = await requireUser();
   const rows = await q(
     `select s.id, s.name, s.label, s.description, s.instructions, s.created_at, s.updated_at,
+            s.status, s.retired_at,
             us.name as author,
             -- Agents holding this skill, in their draft or in the version that is
             -- live. Both matter: one is what a builder would lose, the other is
@@ -37,7 +39,17 @@ export async function GET() {
       order by s.label`,
     [u.orgId],
   );
-  return NextResponse.json({ skills: rows });
+  // Restoring a retired skill, editing one and copying one out (download) are for the
+  // owner and admins; the page hides those controls from everyone else. Anyone else
+  // requests a download, so each skill carries that person's latest request.
+  const mine = u.canPublish ? new Map() : await myLatestRequests(u.orgId, u.id);
+  const skills = rows.map((r: any) => ({ ...r, myRequest: mine.get(r.id) ?? null }));
+  return NextResponse.json({
+    skills,
+    canRestore: u.canPublish,
+    canEdit: u.canPublish,
+    downloadWindowDays: DOWNLOAD_WINDOW_DAYS,
+  });
 }
 
 export async function POST(req: Request) {
@@ -56,10 +68,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "The name needs at least one letter or digit." }, { status: 400 });
   }
 
-  const clash = await one<any>(`select label from skills where org_id = $1 and name = $2`, [u.orgId, name]);
+  const clash = await one<any>(`select label, status from skills where org_id = $1 and name = $2`, [u.orgId, name]);
   if (clash) {
     return NextResponse.json(
-      { error: `"${clash.label}" already answers to the name "${name}". Agents call a skill by that name, so pick another.` },
+      {
+        error:
+          clash.status === "retired"
+            ? `A retired skill, "${clash.label}", already answers to the name "${name}". Restore it, or pick another name.`
+            : `"${clash.label}" already answers to the name "${name}". Agents call a skill by that name, so pick another.`,
+      },
       { status: 409 },
     );
   }

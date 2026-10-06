@@ -5,7 +5,10 @@ import { one, q } from "./db";
 
 const COOKIE = "as_session";
 const rawAuthSecret = process.env.AUTH_SECRET;
-if (!rawAuthSecret && process.env.NODE_ENV === "production") {
+// `next build` loads this module to collect page data, and a build has no secrets. The
+// check applies to the running server, which re-evaluates this module with its own env.
+const isBuild = process.env.NEXT_PHASE === "phase-production-build";
+if (!rawAuthSecret && process.env.NODE_ENV === "production" && !isBuild) {
   throw new Error("CRITICAL SECURITY ERROR: AUTH_SECRET environment variable must be set in production.");
 }
 const secret = new TextEncoder().encode(rawAuthSecret || "dev-secret-change-me");

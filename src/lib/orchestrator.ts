@@ -1,12 +1,13 @@
 import path from "path";
 import { q, one } from "./db";
-import { anthropicFor, buildSystemPrompt, audit } from "./ai";
+import { buildSystemPrompt, audit } from "./ai";
+import { engineAccess, engineOf, modelAccess, modelStep, type EngineAccess } from "./models";
 import { costOf } from "./pricing";
-import { spendThisMonth, capFor, OVER_CAP } from "./spend";
+import { checkLimits, recordUsage } from "./metering";
 import { notify, approverEmails } from "./notify";
 import { TOOLS, toolById, anthropicTools, type ConnRow, type ToolContext } from "./tools";
 import { skillsFor } from "./skills";
-import { specSkillIds, type AgentSpec } from "./types";
+import { normaliseInputs, specSkillIds, type AgentSpec } from "./types";
 import { maskPII, checkRateLimit } from "./guardrails";
 
 const STORAGE = process.env.STORAGE_DIR || path.join(process.cwd(), "storage");
@@ -18,9 +19,23 @@ type RunRow = {
   agent_id: string;
   spec: AgentSpec;
   status: string;
-  state: { messages: any[]; partial: any[]; steps: number };
+  state: { messages: any[]; partial: any[]; steps: number; nudges?: number; checked?: boolean };
   started_by: string;
 };
+
+/**
+ * The Anthropic key for actions that call a model of their own (web search),
+ * whichever engine the agent itself runs on. Empty when there is none; the
+ * action then says so.
+ */
+async function toolModel(orgId: string): Promise<{ apiKey: string; model: string }> {
+  try {
+    const a = await modelAccess(orgId);
+    return { apiKey: a.apiKey, model: a.model };
+  } catch {
+    return { apiKey: "", model: "" };
+  }
+}
 
 async function loadContext(
   orgId: string,
@@ -85,6 +100,54 @@ function applyDLP(content: string, spec: AgentSpec): string {
     redactPhoneNumbers: spec.guardrails.redactPhoneNumbers,
     customPatterns: spec.guardrails.customDlpPatterns,
   }).text;
+}
+
+/**
+ * True when a reply with no action only says what the model is about to do,
+ * e.g. "Now I will compare the invoices…", rather than delivering the result.
+ * Judged on the end of the reply, where a deliverable concludes and an
+ * announcement trails off into the next step.
+ */
+function announcesWork(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  // "I will now proceed…" followed by pages of working is still not the result.
+  if (/^(i understand\.?\s*)?(now,?\s*)?(i will now|i'll now|now i will|i will proceed|let me now|i am now going to)\b/i.test(t.slice(0, 200))) return true;
+  if (t.length > 2500) return false;
+  const tail = t.slice(-400).toLowerCase();
+  return (
+    /[:…]$/.test(t) ||
+    /\b(now|next|first|then)?,?\s*(i will|i'll|let me|i am going to|i'm going to|i need to)\b[^.!?]*[.!?:]?\s*$/.test(tail)
+  );
+}
+
+/**
+ * The step a progress report says it has reached ("I have completed Step 4…"),
+ * when that is short of the last step of the procedure; otherwise null.
+ */
+function stoppedAtStep(text: string, totalSteps: number): number | null {
+  const head = text.slice(0, 600);
+  const m = head.match(/\b(?:completed|finished|done with|done)\s+(?:procedure\s+)?step\s+(\d+)\b/i) ?? head.match(/\bstep\s+(\d+)\s+(?:is\s+)?(?:complete|completed|done)\b/i);
+  const n = m ? Number(m[1]) : NaN;
+  return Number.isFinite(n) && n >= 1 && n < totalSteps ? n : null;
+}
+
+/**
+ * The agent's granted actions that produce or change something (anything above
+ * low risk, and writing a file) which it has not called once in this run.
+ */
+function unusedActions(spec: AgentSpec, messages: any[]): string[] {
+  const used = new Set<string>();
+  for (const m of messages) {
+    if (m.role === "assistant" && Array.isArray(m.content)) {
+      for (const b of m.content) if (b.type === "tool_use") used.add(b.name);
+    }
+  }
+  return (spec.tools || [])
+    .map((t) => toolById(t.id))
+    .filter((d): d is NonNullable<typeof d> => Boolean(d) && (d!.risk !== "low" || d!.id === "write_file"))
+    .filter((d) => !used.has(d.id))
+    .map((d) => d.label);
 }
 
 function safeTrimToolOutput(out: any, maxChars = 20000): string {
@@ -240,18 +303,20 @@ export async function advance(
 
   // Setup can fail too — no model key, an unreachable database. It must fail the
   // run rather than throw past it, or the run is stranded on 'running' forever.
-  let client, model: string, ctx;
+  let access: EngineAccess, model: string, ctx;
   const connectionNames: Record<string, string> = {};
+  // The engine is the run's own (its spec is a snapshot), so a run that pauses
+  // for approval resumes on the model it started with.
+  const engine = engineOf(spec);
   try {
     // Resolved once per advance, so a key changed mid-run is picked up on resume.
-    const access = await anthropicFor(run.org_id);
-    client = access.client;
+    access = await engineAccess(run.org_id, engine, spec.model);
     model = access.model;
     ctx = await loadContext(
       run.org_id,
       run.started_by || user.id,
       spec,
-      { apiKey: access.apiKey, model: access.model },
+      await toolModel(run.org_id),
       run.id,
       run.agent_id,
     );
@@ -264,17 +329,26 @@ export async function advance(
   const usage = () => ({ model, inTok, outTok, cacheRead, cacheWrite });
 
   const system = buildSystemPrompt(spec, connectionNames, ctx.skills);
-  // load_skill is granted by the runtime, not by the spec, and only when there
-  // is something to load.
-  const tools = anthropicTools(spec.tools, ctx.skills.length ? ["load_skill"] : []);
+  // Granted by the runtime rather than the spec: load_skill when there is a skill
+  // to load, and the document reader when the agent takes a file — it is told to
+  // read the file, and it can only do that with the reader.
+  const takesFile = normaliseInputs(spec.inputs as any[]).some((i) => i.type === "file");
+  const runtimeTools = [
+    ...(ctx.skills.length ? ["load_skill"] : []),
+    ...(takesFile && !spec.tools.some((t) => t.id === "read_document") ? ["read_document"] : []),
+  ];
+  const tools = anthropicTools(spec.tools, runtimeTools);
   // Unlisted tools default to needing approval, which is the right instinct for
   // anything the spec did not grant. An implicit tool reaches nothing outside
-  // the workspace's own writing, so it is exempt rather than permanently stuck.
+  // the workspace's own writing, so it is exempt rather than permanently stuck;
+  // a reader granted for a file input only reads, so it runs on its own too.
   const gateOf = (id: string) =>
-    toolById(id)?.implicit ? "auto" : spec.tools.find((t) => t.id === id)?.gate ?? "approval";
+    toolById(id)?.implicit || runtimeTools.includes(id) ? "auto" : spec.tools.find((t) => t.id === id)?.gate ?? "approval";
 
   const messages: any[] = [...run.state.messages];
   let steps = run.state.steps || 0;
+  let nudges = run.state.nudges || 0;
+  let checked = Boolean(run.state.checked);
   let inTok = 0;
   let outTok = 0;
   let cacheRead = 0;
@@ -294,11 +368,11 @@ export async function advance(
       // Keeps the lease alive while this worker is still doing the work.
       await q(`update runs set locked_at = now() where id = $1`, [runId]);
 
-      // Checked every iteration, not just at the start: one long run must not be
-      // able to carry the workspace past its ceiling.
-      const cap = await capFor(run.org_id);
-      if (cap !== null && (await spendThisMonth(run.org_id)) + costOf(toUsage(usage())) >= cap) {
-        await finish(runId, "failed", null, OVER_CAP, usage());
+      // Checked before every model call, not just at the start: one long run must
+      // not be able to carry the key, or this agent, past its usage limit.
+      const limit = await checkLimits(run.org_id, engine, run.agent_id);
+      if (!limit.ok) {
+        await finish(runId, "failed", null, limit.reason, usage());
         return;
       }
 
@@ -308,19 +382,18 @@ export async function advance(
       }
 
       const t0 = Date.now();
-      const res: any = await client.messages.create({
+      const res = await modelStep(access, { system, messages, tools, maxTokens: 4000 });
+      await recordUsage(
+        { orgId: run.org_id, feature: "agent_run", agentId: run.agent_id, runId, userId: (run as any).started_by ?? null },
+        engine,
         model,
-        max_tokens: 4000,
-        system: [
-          {
-            type: "text",
-            text: system,
-            cache_control: { type: "ephemeral" },
-          },
-        ] as any,
-        messages,
-        ...(tools.length ? { tools: tools as any } : {}),
-      });
+        {
+          input: res.usage?.input_tokens,
+          output: res.usage?.output_tokens,
+          cacheRead: res.usage?.cache_read_input_tokens,
+          cacheWrite: res.usage?.cache_creation_input_tokens,
+        },
+      );
       inTok += res.usage?.input_tokens ?? 0;
       outTok += res.usage?.output_tokens ?? 0;
       // Billed at different rates from fresh input; counted separately.
@@ -328,7 +401,7 @@ export async function advance(
       cacheWrite += res.usage?.cache_creation_input_tokens ?? 0;
       steps++;
 
-      messages.push({ role: "assistant", content: res.content });
+      messages.push({ role: "assistant", content: res.content, ...(res.gemini ? { gemini: res.gemini } : {}) });
 
       const toolUses = res.content.filter((b: any) => b.type === "tool_use");
       const text = res.content
@@ -337,13 +410,52 @@ export async function advance(
         .join("\n")
         .trim();
 
+      // A reply that only announces the next piece of work ("Now I will compare…")
+      // is not a deliverable. The model is told to carry on, a couple of times at
+      // most, rather than the run being closed on a promise.
+      // Likewise a progress report that stops partway ("I have completed Step 4…").
+      const reached = toolUses.length ? null : stoppedAtStep(text, spec.steps?.length ?? 0);
+      const announcing =
+        !toolUses.length && nudges < 3 && steps < spec.guardrails.maxSteps + 2 && (announcesWork(text) || reached !== null);
+      const untried = !toolUses.length && !announcing && !checked ? unusedActions(spec, messages) : [];
+
       if (text) {
         await addStep(runId, await nextIdx(runId), {
           kind: "model",
-          title: toolUses.length ? "Reasoning" : "Deliverable",
+          title: toolUses.length || announcing || untried.length ? "Reasoning" : "Deliverable",
           output: { text },
           duration_ms: Date.now() - t0,
         });
+      }
+
+      // Before a run closes, one look back: an action the agent was given to
+      // produce or change something (a file, a hold, an email) that it never
+      // even tried usually means it stopped early and its answer only describes
+      // the work. It is asked once to check; if nothing was needed it says so.
+      if (untried.length) {
+        checked = true;
+        messages.push({
+          role: "user",
+          content:
+            `Before you finish, check your procedure against what you have actually done. You have not used: ${untried.join(", ")}. ` +
+            `If a step of the procedure calls for one of these, do it now with the tool. If none is needed, reply with your final deliverable ` +
+            `and say why — and do not describe anything as done (held, sent, saved) that you did not do with a tool.`,
+        });
+        await q(`update runs set state = $2 where id = $1`, [runId, JSON.stringify({ messages, partial: [], steps, nudges, checked })]);
+        continue;
+      }
+
+      if (announcing) {
+        nudges++;
+        messages.push({
+          role: "user",
+          content:
+            reached !== null
+              ? `The procedure is not finished: steps ${reached + 1} to ${spec.steps.length} remain. Carry on with them now, using your tools, and write the deliverable only once they are done.`
+              : "Carry on and do that now, using your tools. Write the deliverable only once the work is done.",
+        });
+        await q(`update runs set state = $2 where id = $1`, [runId, JSON.stringify({ messages, partial: [], steps, nudges, checked })]);
+        continue;
       }
 
       if (!toolUses.length) {
@@ -434,7 +546,7 @@ export async function advance(
         await q(
           `update runs set status = 'awaiting_approval', locked_at = null, state = $2,
              input_tokens = input_tokens + $3, output_tokens = output_tokens + $4 where id = $1`,
-          [runId, JSON.stringify({ messages, partial: results, steps }), inTok, outTok],
+          [runId, JSON.stringify({ messages, partial: results, steps, nudges, checked }), inTok, outTok],
         );
         // A gate holds indefinitely by design, which only works if someone knows.
         const held = toolUses.filter((u: any) => gateOf(u.name) === "approval").map((u: any) => u.name);
@@ -451,7 +563,7 @@ export async function advance(
       }
 
       messages.push({ role: "user", content: results });
-      await q(`update runs set state = $2 where id = $1`, [runId, JSON.stringify({ messages, partial: [], steps })]);
+      await q(`update runs set state = $2 where id = $1`, [runId, JSON.stringify({ messages, partial: [], steps, nudges, checked })]);
     }
   } catch (err: any) {
     await finish(runId, "failed", null, err?.message || String(err), usage());
@@ -484,8 +596,7 @@ export async function resumeAfterApprovals(runId: string, user: { id: string; na
   // and leave it stranded on 'awaiting_approval' forever.
   let ctx;
   try {
-    const { model, apiKey } = await anthropicFor(run.org_id);
-    ctx = await loadContext(run.org_id, run.started_by || user.id, run.spec, { apiKey, model });
+    ctx = await loadContext(run.org_id, run.started_by || user.id, run.spec, await toolModel(run.org_id));
   } catch (err: any) {
     await finish(runId, "failed", null, err?.message || String(err), { model: "", inTok: 0, outTok: 0, cacheRead: 0, cacheWrite: 0 });
     return;
@@ -541,7 +652,7 @@ export async function resumeAfterApprovals(runId: string, user: { id: string; na
   const messages = [...run.state.messages, { role: "user", content: results }];
   await q(`update runs set state = $2 where id = $1`, [
     runId,
-    JSON.stringify({ messages, partial: [], steps: run.state.steps }),
+    JSON.stringify({ messages, partial: [], steps: run.state.steps, nudges: run.state.nudges || 0, checked: Boolean(run.state.checked) }),
   ]);
   // The lease is already held from the transition above.
   await advance(runId, user, true);

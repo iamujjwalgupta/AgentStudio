@@ -1,3 +1,5 @@
+import "../agents/agents.css";
+import "./apps.css";
 import { requireUser } from "@/lib/auth";
 import { listApps } from "@/lib/apps";
 import AppsHub from "@/components/AppsHub";
@@ -8,5 +10,5 @@ export default async function AppsPage() {
   const u = await requireUser();
   const apps = await listApps(u.orgId);
 
-  return <AppsHub initialApps={apps} />;
+  return <AppsHub initialApps={apps} timezone={u.timezone || "UTC"} />;
 }

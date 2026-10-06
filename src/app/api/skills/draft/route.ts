@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Describe the skill you want drafted." }, { status: 400 });
   }
   try {
-    const draft = await draftSkill(u.orgId, String(brief).slice(0, 4000));
+    const draft = await draftSkill(u.orgId, String(brief).slice(0, 4000), u.id);
     return NextResponse.json({ draft });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "The skill could not be drafted." }, { status: 400 });

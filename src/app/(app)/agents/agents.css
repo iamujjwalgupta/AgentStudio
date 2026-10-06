@@ -1,0 +1,210 @@
+/* ==========================================================================
+   Agents list
+   Process colours arrive as --pc from the row or card, so a process code looks
+   the same in the list, the cards and the process tiles.
+   ========================================================================== */
+
+/* ---- summary bar -------------------------------------------------------- */
+.al-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.al-stat {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px;
+  font: inherit; color: var(--text); cursor: pointer; transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.al-stat:hover { border-color: var(--link); box-shadow: 0 6px 18px -12px rgba(0,51,141,.45); }
+.al-stat .v { font-size: 22px; font-weight: 600; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.al-stat .l { font-size: 12px; color: var(--muted); }
+.al-stat.ok .v { color: #007a78; }
+.al-stat.warn .v { color: var(--warn); }
+.al-stat.on { border-color: var(--ink); background: #eef4fd; box-shadow: inset 0 0 0 1px var(--ink); }
+
+/* ---- toolbar: stays in view while the list scrolls ------------------------ */
+.al-toolbar {
+  position: sticky; top: 0; z-index: 20; background: var(--paper);
+  padding: 10px 0 8px; margin-bottom: 10px; border-bottom: 1px solid var(--line-soft);
+}
+.al-toolbar-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.al-toolbar-row + .al-toolbar-row { margin-top: 8px; justify-content: space-between; }
+.al-search { flex: 1 1 240px; min-width: 200px; }
+.al-n { font-family: var(--mono); font-size: 10.5px; opacity: .7; margin-left: 3px; }
+.chip.on .al-n { opacity: .85; }
+.al-count { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; color: var(--muted-2); text-transform: uppercase; display: inline-flex; align-items: center; }
+.al-active { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.al-chip {
+  font: inherit; font-size: 12px; display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 999px; border: 1px solid rgba(0,51,141,.25); background: #eef4fd; color: var(--ink); cursor: pointer;
+}
+.al-chip:hover { border-color: var(--ink); }
+.al-chip span { font-size: 14px; line-height: 1; opacity: .7; }
+
+/* ---- list ------------------------------------------------------------------ */
+.al-table {
+  background: var(--panel); border: 1px solid rgba(0,51,141,.15); border-radius: var(--radius); overflow: visible;
+  box-shadow: 0 1px 2px rgba(0,51,141,.05), 0 10px 26px -14px rgba(0,51,141,.22);
+}
+.al-row {
+  display: grid; align-items: center; gap: 14px;
+  grid-template-columns: minmax(240px, 2.6fr) minmax(150px, 1.3fr) 84px 128px 150px 170px;
+  padding: 10px 16px; border-bottom: 1px solid var(--line-soft); cursor: pointer;
+}
+.al-row:last-child { border-bottom: 0; }
+.al-row:not(.al-head):not(.al-skel):hover { background: #f7f9fd; }
+.al-row.peeked { background: #eef4fd; box-shadow: inset 3px 0 0 var(--ink); }
+.al-head {
+  cursor: default; background: #f7f9fc; border-radius: var(--radius) var(--radius) 0 0;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); padding-top: 9px; padding-bottom: 9px;
+}
+.al-main { min-width: 0; }
+.al-name {
+  display: block; font-weight: 600; color: var(--text); text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.al-name:hover { color: var(--link); text-decoration: underline; }
+.al-desc { color: var(--muted); font-size: 12.5px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.al-small { font-size: 12px; }
+.al-type { font-size: 12px; color: var(--muted-2); }
+
+.al-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.al-tag {
+  display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11.5px; line-height: 1.5; padding: 1px 8px; border-radius: 6px; background: #eef2f8; color: var(--muted-2);
+}
+.al-proc {
+  font-family: var(--mono); font-weight: 600; letter-spacing: .04em; color: var(--pc);
+  background: color-mix(in srgb, var(--pc) 10%, white); box-shadow: inset 2px 0 0 var(--pc);
+}
+
+.al-waiting {
+  display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+  background: var(--warn-bg); color: var(--warn); text-decoration: none;
+}
+.al-lastrun { display: inline-flex; align-items: center; gap: 7px; }
+.al-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #a9b7cc; }
+.al-dot.ok { background: #00a3a1; }
+.al-dot.bad { background: #d1345b; }
+.al-dot.wait { background: var(--warn); }
+.al-dot.live { background: var(--sky); animation: al-pulse 1.2s ease-in-out infinite; }
+@keyframes al-pulse { 50% { opacity: .35; } }
+
+.al-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.al-row .icon-act, .al-card .icon-act { opacity: .75; }
+.al-run {
+  padding: 4px 10px; font-size: 12.5px; gap: 5px; border-radius: 8px; text-decoration: none;
+  color: var(--ink); border-color: rgba(0,51,141,.3);
+}
+.al-run:hover { background: var(--ink); border-color: var(--ink); color: #fff; }
+
+.al-menu-wrap { position: relative; }
+.al-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 186px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 5px;
+  box-shadow: 0 14px 34px -14px rgba(0,31,92,.4);
+}
+.al-menu button {
+  width: 100%; display: flex; align-items: center; gap: 9px; font: inherit; font-size: 13px; text-align: left;
+  padding: 7px 10px; border: 0; border-radius: 7px; background: none; color: var(--text); cursor: pointer;
+}
+.al-menu button:hover:not(:disabled) { background: #f2f5fa; }
+.al-menu button.danger { color: #b02a49; }
+.al-menu button.danger:hover { background: #fdecef; }
+.al-menu-sep { height: 1px; background: var(--line-soft); margin: 4px 2px; }
+
+/* placeholder rows while a page loads */
+.al-skel { cursor: default; }
+.al-bar {
+  display: block; height: 11px; border-radius: 6px; margin: 3px 0;
+  background: linear-gradient(90deg, #edf1f7 25%, #f7f9fc 50%, #edf1f7 75%); background-size: 200% 100%;
+  animation: al-shimmer 1.1s linear infinite;
+}
+.al-bar.thin { height: 8px; }
+.al-bar.w30 { width: 30%; } .al-bar.w40 { width: 40%; } .al-bar.w50 { width: 50%; }
+.al-bar.w60 { width: 60%; } .al-bar.w90 { width: 90%; }
+@keyframes al-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* ---- grid -------------------------------------------------------------------- */
+.al-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+.al-card {
+  display: flex; flex-direction: column; gap: 6px; min-height: 196px; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--pc); border-radius: var(--radius);
+  padding: 12px 14px; transition: box-shadow .15s, transform .15s;
+}
+.al-card:hover { box-shadow: 0 10px 26px -14px rgba(0,51,141,.4); transform: translateY(-1px); }
+.al-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.al-card-name {
+  font-weight: 600; color: var(--text); text-decoration: none; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.al-card-name:hover { color: var(--link); text-decoration: underline; }
+.al-card-desc {
+  margin: 0; color: var(--muted); font-size: 12.5px; flex: 1;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.al-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.al-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--line-soft); padding-top: 8px; }
+
+/* ---- by process ------------------------------------------------------------- */
+.al-procs { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.al-proc-tile {
+  display: flex; flex-direction: column; gap: 4px; text-align: left; font: inherit; color: var(--text); cursor: pointer;
+  background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--pc); border-radius: 12px; padding: 12px 14px;
+  transition: box-shadow .15s, transform .15s;
+}
+.al-proc-tile:hover { box-shadow: 0 10px 26px -14px rgba(0,51,141,.4); transform: translateY(-1px); }
+.al-proc-head { display: flex; align-items: baseline; justify-content: space-between; }
+.al-proc-code { font-family: var(--mono); font-weight: 700; font-size: 18px; color: var(--pc); letter-spacing: .04em; }
+.al-proc-n { font-size: 22px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.al-proc-live { font-size: 12px; color: #007a78; }
+.al-proc-fns { font-size: 12.5px; color: var(--muted-2); }
+.al-proc-inds { font-size: 11.5px; color: var(--muted); }
+
+/* ---- quick look ------------------------------------------------------------ */
+.al-peek-back { position: fixed; inset: 0; z-index: 60; background: rgba(10,27,61,.16); }
+.al-peek {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 61; width: min(440px, 100vw); overflow-y: auto;
+  background: var(--panel); border-left: 1px solid var(--line); box-shadow: -18px 0 40px -24px rgba(0,31,92,.45);
+  padding: 16px 20px 24px; animation: al-slide .18s ease-out;
+}
+@keyframes al-slide { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.al-peek-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.al-peek-title { margin: 0 0 6px; font-size: 18px; line-height: 1.3; }
+.al-peek-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.al-peek-desc { color: var(--muted-2); font-size: 13.5px; margin: 10px 0 4px; }
+.al-peek-facts { display: grid; grid-template-columns: 96px 1fr; gap: 6px 10px; margin: 12px 0 0; font-size: 13px; }
+.al-peek-facts dt { color: var(--muted); }
+.al-peek-facts dd { margin: 0; }
+.al-peek-h { margin: 16px 0 6px; }
+.al-peek-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 13px; }
+.al-peek-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.al-peek-run { display: inline-flex; align-items: center; gap: 7px; color: var(--text); text-decoration: none; }
+.al-peek-run:hover { color: var(--link); }
+.al-gate { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--ok-bg); color: #007a78; white-space: nowrap; }
+.al-gate.gated { background: var(--warn-bg); color: var(--warn); }
+.al-peek-foot { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line-soft); }
+
+/* ---- smaller screens ------------------------------------------------------- */
+@media (max-width: 1180px) {
+  .al-row { grid-template-columns: minmax(220px, 2.4fr) minmax(140px, 1.2fr) 124px 140px 150px; }
+  .al-row > :nth-child(3) { display: none; } /* type: still in the quick look and the filters */
+}
+@media (max-width: 860px) {
+  .al-row { grid-template-columns: 1fr auto; row-gap: 6px; }
+  .al-row > :nth-child(2), .al-row > :nth-child(4), .al-row > :nth-child(5) { grid-column: 1; }
+  .al-head { display: none; }
+}
+
+/* A menu item the viewer may not use stays listed, dimmed, with the reason. */
+.al-menu button:disabled { opacity: .45; cursor: not-allowed; }
+.al-menu button.danger:disabled:hover { background: none; }
+.al-menu-note { font-size: 11px; color: var(--muted); padding: 0 10px 5px 34px; }
+
+/* ---- layout switcher (list | grid icons) and the separate browse-by-cycle button ---- */
+.al-toolbar .seg-opt { display: inline-flex; align-items: center; gap: 6px; }
+.al-toolbar .seg-opt.icon { padding-left: 11px; padding-right: 11px; }
+.al-cycle-btn {
+  display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12.5px; font-weight: 550; color: var(--ink);
+  background: #fff; border: 1px solid var(--line); border-radius: 9px; padding: 5px 11px; cursor: pointer; white-space: nowrap;
+}
+.al-cycle-btn:hover { border-color: var(--link); background: #f7faff; }
+.al-cycle-btn.on { background: var(--ink); border-color: var(--ink); color: #fff; }
+.al-toolbar .seg-opt + .seg-opt { border-left: 1px solid var(--line); }
+.al-toolbar .seg-opt:not(.on):hover { background: #f1f5fb; color: var(--ink); }

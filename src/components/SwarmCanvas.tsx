@@ -1,9 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 import Link from "next/link";
 import type { SwarmWorker } from "@/lib/types";
+import { ArrowRightIcon, GridIcon, PlugIcon, SparkIcon } from "@/components/agent-ui";
+
+/**
+ * The team an agent coordinates: which agents it hands work to, what each one
+ * handles, and how the work is split. Saved on every change through the
+ * agent's swarm endpoint, which a normal run reads when delegation is on.
+ */
 
 interface SwarmConfig {
   enabled: boolean;
@@ -20,30 +26,23 @@ interface Props {
   onSaved?: (swarm: SwarmConfig) => void;
 }
 
-export default function SwarmCanvas({
-  agentId,
-  agentName,
-  initialSwarm,
-  availableAgents,
-  onSaved,
-}: Props) {
-  const router = useRouter();
+const STRATEGIES: { id: SwarmConfig["strategy"]; title: string; note: string; icon: React.ReactNode }[] = [
+  { id: "router", title: "Picks per part", note: "Sends each part of the work to the agent best suited to it", icon: <SparkIcon size={15} /> },
+  { id: "parallel", title: "All at once", note: "Asks every agent together, then combines what they return", icon: <GridIcon size={15} /> },
+  { id: "sequential", title: "In order", note: "Passes the work from one agent to the next, in the order listed", icon: <ArrowRightIcon size={15} /> },
+];
 
+export default function SwarmCanvas({ agentId, agentName, initialSwarm, availableAgents, onSaved }: Props) {
   const [swarm, setSwarm] = useState<SwarmConfig>(() => ({
-    enabled: initialSwarm?.enabled ?? true,
+    enabled: initialSwarm?.enabled ?? false,
     strategy: initialSwarm?.strategy ?? "router",
     supervisorRole: initialSwarm?.supervisorRole || "Triage & Delegate",
     workers: initialSwarm?.workers || [],
   }));
-
   const [saving, setSaving] = useState(false);
-  const [dispatching, setDispatching] = useState(false);
   const [selectedNewWorker, setSelectedNewWorker] = useState("");
-  const [dispatchPrompt, setDispatchPrompt] = useState("");
-  const [showDispatchModal, setShowDispatchModal] = useState(false);
   const [showAddExternalModal, setShowAddExternalModal] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-
   const [externalForm, setExternalForm] = useState({
     name: "",
     role: "",
@@ -52,29 +51,7 @@ export default function SwarmCanvas({
     apiKey: "",
     taskPrompt: "",
   });
-
   const [pingStatus, setPingStatus] = useState<Record<string, { status: "testing" | "ok" | "err"; msg?: string }>>({});
-
-  // Auto-populate sample workers if none exist to give an immediate setup experience
-  useEffect(() => {
-    if (swarm.workers.length === 0 && availableAgents.length > 0) {
-      const sampleWorkers: SwarmWorker[] = availableAgents.slice(0, 3).map((a, i) => {
-        const roles = [
-          "Data Analyst: Gathers and queries telemetry records",
-          "Report Drafter: Synthesizes findings into narrative deliverable",
-          "Policy Reviewer: Checks outputs against compliance rules",
-        ];
-        return {
-          id: a.id,
-          agentId: a.id,
-          name: a.name,
-          role: roles[i % roles.length],
-          type: "internal",
-        };
-      });
-      setSwarm((s) => ({ ...s, workers: sampleWorkers }));
-    }
-  }, [availableAgents]);
 
   async function saveSwarm(updated = swarm) {
     setSaving(true);
@@ -86,8 +63,8 @@ export default function SwarmCanvas({
         body: JSON.stringify({ swarm: updated }),
       });
       const j = await res.json();
-      if (!res.ok) throw new Error(j.error || "Failed to save swarm configuration");
-      setFeedbackMsg({ kind: "ok", text: "Swarm orchestration topology saved." });
+      if (!res.ok) throw new Error(j.error || "The team could not be saved.");
+      setFeedbackMsg({ kind: "ok", text: "Saved." });
       if (onSaved) onSaved(updated);
     } catch (e: any) {
       setFeedbackMsg({ kind: "err", text: e.message });
@@ -96,533 +73,201 @@ export default function SwarmCanvas({
     }
   }
 
-  function addInternalWorker() {
-    if (!selectedNewWorker) return;
-    const target = availableAgents.find((a) => a.id === selectedNewWorker);
-    if (!target) return;
-    if (swarm.workers.some((w) => w.agentId === target.id)) return;
+  function update(next: SwarmConfig, save = true) {
+    setSwarm(next);
+    if (save) saveSwarm(next);
+  }
 
-    const updated: SwarmConfig = {
+  function addInternalWorker() {
+    const target = availableAgents.find((a) => a.id === selectedNewWorker);
+    if (!target || swarm.workers.some((w) => w.agentId === target.id)) return;
+    update({
       ...swarm,
-      workers: [
-        ...swarm.workers,
-        {
-          id: target.id,
-          agentId: target.id,
-          name: target.name,
-          role: "Specialist Worker: Executes sub-task assigned by Supervisor",
-          type: "internal",
-        },
-      ],
-    };
-    setSwarm(updated);
+      workers: [...swarm.workers, { id: target.id, agentId: target.id, name: target.name, role: "", type: "internal" }],
+    });
     setSelectedNewWorker("");
-    saveSwarm(updated);
   }
 
   function addExternalWorker() {
     if (!externalForm.name.trim() || !externalForm.endpointUrl.trim()) return;
-
-    const newWorker: SwarmWorker = {
+    const worker: SwarmWorker = {
       id: `ext_${Date.now()}`,
       name: externalForm.name.trim(),
-      role: externalForm.role.trim() || "External A2A Specialist",
+      role: externalForm.role.trim(),
       type: "external",
       endpointUrl: externalForm.endpointUrl.trim(),
       protocol: externalForm.protocol,
       apiKey: externalForm.apiKey.trim() || undefined,
       taskPrompt: externalForm.taskPrompt.trim() || undefined,
     };
-
-    const updated: SwarmConfig = {
-      ...swarm,
-      workers: [...swarm.workers, newWorker],
-    };
-    setSwarm(updated);
-    saveSwarm(updated);
+    update({ ...swarm, workers: [...swarm.workers, worker] });
     setShowAddExternalModal(false);
     setExternalForm({ name: "", role: "", endpointUrl: "", protocol: "a2a", apiKey: "", taskPrompt: "" });
   }
 
-  function removeWorker(identifier: string) {
-    const updated: SwarmConfig = {
-      ...swarm,
-      workers: swarm.workers.filter((w) => (w.id || w.agentId) !== identifier),
-    };
-    setSwarm(updated);
-    saveSwarm(updated);
-  }
-
-  function updateWorkerRole(identifier: string, role: string) {
-    const updated: SwarmConfig = {
-      ...swarm,
-      workers: swarm.workers.map((w) => ((w.id || w.agentId) === identifier ? { ...w, role } : w)),
-    };
-    setSwarm(updated);
-  }
+  const keyOf = (w: SwarmWorker, i: number) => w.id || w.agentId || `worker_${i}`;
 
   async function pingEndpoint(workerKey: string, endpointUrl: string, apiKey?: string) {
     setPingStatus((prev) => ({ ...prev, [workerKey]: { status: "testing" } }));
     try {
-      const res = await fetch(endpointUrl, {
-        method: "GET",
-        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
-      });
-      if (res.ok) {
-        setPingStatus((prev) => ({
-          ...prev,
-          [workerKey]: { status: "ok", msg: "A2A Endpoint Active (200 OK)" },
-        }));
-      } else {
-        setPingStatus((prev) => ({
-          ...prev,
-          [workerKey]: { status: "err", msg: `HTTP ${res.status}` },
-        }));
-      }
-    } catch (e: any) {
+      const res = await fetch(endpointUrl, { method: "GET", headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
       setPingStatus((prev) => ({
         ...prev,
-        [workerKey]: { status: "err", msg: e.message || "Network Error" },
+        [workerKey]: res.ok ? { status: "ok", msg: "Reachable" } : { status: "err", msg: `HTTP ${res.status}` },
       }));
-    }
-  }
-
-  async function dispatchSwarm() {
-    setDispatching(true);
-    setFeedbackMsg(null);
-    try {
-      const res = await fetch(`/api/agents/${agentId}/swarm`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "dispatch",
-          swarm,
-          input: dispatchPrompt || `Multi-Agent Swarm Run coordinated by ${agentName}.`,
-        }),
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || "Failed to dispatch swarm");
-      setShowDispatchModal(false);
-      router.push(`/runs/${j.runId}`);
     } catch (e: any) {
-      setFeedbackMsg({ kind: "err", text: e.message });
-      setDispatching(false);
+      setPingStatus((prev) => ({ ...prev, [workerKey]: { status: "err", msg: e.message || "Not reachable" } }));
     }
   }
 
-  const unassignedAgents = availableAgents.filter(
-    (a) => !swarm.workers.some((w) => w.agentId === a.id) && a.id !== agentId
-  );
+  const unassignedAgents = availableAgents.filter((a) => !swarm.workers.some((w) => w.agentId === a.id) && a.id !== agentId);
 
   return (
-    <div className="swarm-canvas-container">
-      {/* Canvas Top Bar */}
-      <div className="swarm-top-bar">
-        <div className="swarm-top-left">
-          <div className="swarm-badge-pill">
-            <span className="swarm-pulse-dot" />
-            <span>Multi-Agent Swarm Orchestrator</span>
-          </div>
-
-          <div className="swarm-strategy-select-wrap">
-            <label className="swarm-ctrl-label">Strategy:</label>
-            <select
-              className="swarm-select"
-              value={swarm.strategy}
-              onChange={(e) => {
-                const s = e.target.value as any;
-                const upd = { ...swarm, strategy: s };
-                setSwarm(upd);
-                saveSwarm(upd);
-              }}
-            >
-              <option value="router">Dynamic Router / Triage (Autonomous Decision)</option>
-              <option value="parallel">Parallel Swarm (Concurrent Execution & Synthesis)</option>
-              <option value="sequential">Sequential Pipeline (Step-by-Step Chain)</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="swarm-top-actions">
-          {/* Add Internal Worker Dropdown */}
-          <div className="swarm-add-worker-group">
-            <select
-              className="swarm-select"
-              value={selectedNewWorker}
-              onChange={(e) => setSelectedNewWorker(e.target.value)}
-              style={{ maxWidth: 200 }}
-            >
-              <option value="">+ Workspace Agent...</option>
-              {unassignedAgents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name} ({a.archetype})
-                </option>
-              ))}
-            </select>
+    <div className="ab-team">
+      <div className="ab-field">
+        <span className="ab-label">How {agentName} splits the work</span>
+        <div className="ab-choices three">
+          {STRATEGIES.map((s) => (
             <button
+              key={s.id}
               type="button"
-              className="btn btn-ghost"
-              onClick={addInternalWorker}
-              disabled={!selectedNewWorker}
+              className={`ab-choice ${swarm.strategy === s.id ? "on" : ""}`}
+              onClick={() => swarm.strategy !== s.id && update({ ...swarm, strategy: s.id })}
             >
-              Add
+              <span className="ic">{s.icon}</span>
+              <span>
+                <b>{s.title}</b>
+                <span>{s.note}</span>
+              </span>
             </button>
-          </div>
-
-          {/* Add External Agent Button */}
-          <button
-            type="button"
-            className="btn btn-ghost"
-            style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
-            onClick={() => setShowAddExternalModal(true)}
-          >
-            <span>🌐 + External A2A Agent</span>
-          </button>
-
-          {/* Dispatch Swarm Button */}
-          <button
-            type="button"
-            className="btn btn-primary"
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-            onClick={() => setShowDispatchModal(true)}
-          >
-            <span>⚡ Dispatch Swarm</span>
-          </button>
+          ))}
         </div>
       </div>
 
-      {feedbackMsg && (
-        <div className={feedbackMsg.kind === "ok" ? "ok-note" : "error"} style={{ marginBottom: 14 }}>
-          {feedbackMsg.text}
-        </div>
-      )}
+      <label className="ab-field">
+        <span className="ab-label">Its own role while coordinating</span>
+        <input
+          className="input"
+          value={swarm.supervisorRole || ""}
+          placeholder="e.g. Split the close checklist by entity and consolidate the results"
+          onChange={(e) => update({ ...swarm, supervisorRole: e.target.value }, false)}
+          onBlur={() => saveSwarm()}
+        />
+      </label>
 
-      {/* Visual Canvas Diagram */}
-      <div className="swarm-visual-board">
-        {/* Visual Strategy Legend */}
-        <div className="swarm-legend">
-          <div className="swarm-legend-item">
-            <span className="swarm-legend-color supervisor" />
-            <span>Supervisor Coordinator</span>
-          </div>
-          <div className="swarm-legend-item">
-            <span className="swarm-legend-color worker" />
-            <span>Specialist Sub-Agents ({swarm.workers.length})</span>
-          </div>
-          <div className="swarm-legend-item">
-            <span className="swarm-legend-mode">
-              Mode: {swarm.strategy === "router" ? "Autonomous Routing" : swarm.strategy === "parallel" ? "Parallel Fan-Out" : "Sequential Chain"}
-            </span>
-          </div>
-        </div>
+      <div className="ab-field">
+        <span className="ab-label-row">
+          <span className="ab-label">
+            Agents it hands work to <span className="ab-count">{swarm.workers.length}</span>
+          </span>
+          <span className="sub-line">{saving ? "Saving…" : feedbackMsg?.kind === "ok" ? "Saved" : ""}</span>
+        </span>
 
-        <div className="swarm-graph-layout">
-          {/* Level 1: Supervisor Node */}
-          <div className="swarm-supervisor-node-wrap">
-            <div className="swarm-node supervisor-node">
-              <div className="swarm-node-crown">👑 Supervisor Coordinator</div>
-              <div className="swarm-node-title">{agentName}</div>
-              <div className="swarm-node-role">
-                <input
-                  className="swarm-role-input"
-                  value={swarm.supervisorRole || ""}
-                  placeholder="Supervisor Role..."
-                  onChange={(e) => setSwarm({ ...swarm, supervisorRole: e.target.value })}
-                  onBlur={() => saveSwarm()}
-                />
-              </div>
-              <div className="swarm-node-stats">
-                <span>Orchestrating {swarm.workers.length} Sub-Agents</span>
-              </div>
-            </div>
-
-            {/* SVG Connecting Flow Lines */}
-            {swarm.workers.length > 0 && (
-              <div className="swarm-connector-spine">
-                <div className="swarm-flow-line-vertical" />
-              </div>
-            )}
-          </div>
-
-          {/* Level 2: Worker Nodes Grid */}
-          {swarm.workers.length === 0 ? (
-            <div className="swarm-empty-workers">
-              <p>No worker sub-agents attached yet.</p>
-              <span>Add a workspace agent or an external A2A agent from the top bar to assign tasks to this swarm.</span>
-            </div>
-          ) : (
-            <div className="swarm-workers-container">
-              {swarm.workers.map((worker, idx) => {
-                const workerId = worker.id || worker.agentId || `worker_${idx}`;
-                const isExternal = worker.type === "external" || Boolean(worker.endpointUrl);
-                const ping = pingStatus[workerId];
-
-                return (
-                  <div key={workerId} className="swarm-worker-col">
-                    {/* Branch connecting line */}
-                    <div className="swarm-branch-indicator">
-                      <span className="swarm-branch-step-pill">
-                        {swarm.strategy === "sequential" ? `Step ${idx + 1}` : `Worker ${idx + 1}`}
-                      </span>
-                      <div className="swarm-branch-arrow">↓</div>
+        {swarm.workers.length === 0 ? (
+          <div className="note">No agents yet. Add one below and say what it should handle.</div>
+        ) : (
+          <div className="ab-members">
+            {swarm.workers.map((w, i) => {
+              const k = keyOf(w, i);
+              const external = w.type === "external" || Boolean(w.endpointUrl);
+              const ping = pingStatus[k];
+              return (
+                <div key={k} className="ab-member">
+                  <span className={`ab-member-av ${external ? "ext" : ""}`}>{external ? <PlugIcon size={15} /> : (w.name || "?")[0].toUpperCase()}</span>
+                  <div className="ab-member-body">
+                    <div className="ab-member-head">
+                      <b>{w.name}</b>
+                      <span className={`ab-member-badge ${external ? "ext" : ""}`}>{external ? "External agent" : "Workspace agent"}</span>
+                      {swarm.strategy === "sequential" && <span className="ab-count">Step {i + 1}</span>}
                     </div>
-
-                    {/* Worker Node Card */}
-                    <div className={`swarm-node worker-node ${isExternal ? "external-worker" : ""}`}>
-                      <div className="swarm-worker-head">
-                        <div className="swarm-worker-title-group">
-                          <span className="swarm-worker-icon">{isExternal ? "🌐" : "🤖"}</span>
-                          <div>
-                            <div className="swarm-worker-title">{worker.name}</div>
-                            {isExternal ? (
-                              <span className="swarm-worker-badge external">External A2A</span>
-                            ) : (
-                              <span className="swarm-worker-badge internal">Workspace Agent</span>
-                            )}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          className="swarm-node-remove"
-                          onClick={() => removeWorker(workerId)}
-                          title="Remove from swarm"
-                        >
-                          ✕
-                        </button>
-                      </div>
-
-                      {/* External Endpoint Preview & Ping */}
-                      {isExternal && worker.endpointUrl && (
-                        <div style={{ marginTop: 6 }}>
-                          <div className="swarm-endpoint-pill" title={worker.endpointUrl}>
-                            {worker.endpointUrl}
-                          </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
-                            <button
-                              type="button"
-                              className="swarm-ping-btn"
-                              onClick={() => pingEndpoint(workerId, worker.endpointUrl!, worker.apiKey)}
-                              disabled={ping?.status === "testing"}
-                            >
-                              {ping?.status === "testing" ? "Testing…" : "⚡ Ping A2A"}
-                            </button>
-                            {ping && (
-                              <span
-                                style={{
-                                  fontSize: 11,
-                                  color: ping.status === "ok" ? "#16a34a" : "#dc2626",
-                                  fontWeight: 500,
-                                }}
-                              >
-                                {ping.msg}
-                              </span>
-                            )}
-                          </div>
-                        </div>
+                    <textarea
+                      className="input ab-member-role"
+                      rows={2}
+                      value={w.role}
+                      placeholder="What it should handle, e.g. Reconcile the bank accounts for each entity"
+                      onChange={(e) =>
+                        update({ ...swarm, workers: swarm.workers.map((x, j) => (j === i ? { ...x, role: e.target.value } : x)) }, false)
+                      }
+                      onBlur={() => saveSwarm()}
+                    />
+                    <div className="ab-member-foot">
+                      {!external && w.agentId && (
+                        <Link href={`/agents/${w.agentId}`} target="_blank" className="ab-edit">
+                          Open agent ↗
+                        </Link>
                       )}
-
-                      <div className="swarm-worker-role-wrap" style={{ marginTop: 8 }}>
-                        <label className="swarm-sub-label">Delegated Sub-Task Role:</label>
-                        <textarea
-                          className="swarm-role-textarea"
-                          rows={2}
-                          value={worker.role}
-                          onChange={(e) => updateWorkerRole(workerId, e.target.value)}
-                          onBlur={() => saveSwarm()}
-                          placeholder="Define what the supervisor delegates to this worker..."
-                        />
-                      </div>
-
-                      <div className="swarm-worker-foot">
-                        {!isExternal && worker.agentId && (
-                          <Link
-                            href={`/agents/${worker.agentId}`}
-                            className="swarm-sub-link"
-                            target="_blank"
-                          >
-                            View Agent Spec ↗
-                          </Link>
-                        )}
-                      </div>
+                      {external && w.endpointUrl && (
+                        <>
+                          <span className="mono dim" style={{ fontSize: 11.5, overflow: "hidden", textOverflow: "ellipsis" }} title={w.endpointUrl}>
+                            {w.endpointUrl}
+                          </span>
+                          <button type="button" className="ab-edit" onClick={() => pingEndpoint(k, w.endpointUrl!, w.apiKey)} disabled={ping?.status === "testing"}>
+                            {ping?.status === "testing" ? "Testing…" : "Test connection"}
+                          </button>
+                          {ping && ping.status !== "testing" && (
+                            <span style={{ fontSize: 11.5, color: ping.status === "ok" ? "#007a78" : "#b02a49" }}>{ping.msg}</span>
+                          )}
+                        </>
+                      )}
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Add External A2A Agent Modal */}
-      {showAddExternalModal && (
-        <div className="conn-modal-overlay" onClick={() => setShowAddExternalModal(false)}>
-          <div className="conn-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
-            <div className="conn-modal-head">
-              <div className="conn-modal-title-group">
-                <span style={{ fontSize: 24 }}>🌐</span>
-                <div>
-                  <h3 className="conn-modal-title">Connect External A2A Agent</h3>
-                  <div className="conn-modal-subtitle">
-                    Attach an autonomous agent running outside Agent Studio via A2A Protocol
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                className="conn-modal-close"
-                onClick={() => setShowAddExternalModal(false)}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="conn-modal-body">
-              <div className="conn-form-field">
-                <label className="conn-label">External Agent Name *</label>
-                <input
-                  className="conn-input"
-                  placeholder="e.g. Market Sentiment Telemetry Agent"
-                  value={externalForm.name}
-                  onChange={(e) => setExternalForm({ ...externalForm, name: e.target.value })}
-                />
-              </div>
-
-              <div className="conn-form-field">
-                <label className="conn-label">Role / Sub-Task Description *</label>
-                <input
-                  className="conn-input"
-                  placeholder="e.g. Queries external social feeds and computes volatility index"
-                  value={externalForm.role}
-                  onChange={(e) => setExternalForm({ ...externalForm, role: e.target.value })}
-                />
-              </div>
-
-              <div className="conn-form-field">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <label className="conn-label">A2A Protocol Endpoint URL *</label>
                   <button
                     type="button"
-                    style={{ fontSize: 11, color: "#005eb8", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}
-                    onClick={() =>
-                      setExternalForm({
-                        ...externalForm,
-                        name: "Mock External Specialist",
-                        role: "Market Telemetry & Sentiment Risk Analysis",
-                        endpointUrl: `${window.location.origin}/api/a2a/mock-worker`,
-                      })
-                    }
+                    className="ab-member-x"
+                    onClick={() => update({ ...swarm, workers: swarm.workers.filter((_, j) => j !== i) })}
+                    aria-label={`Remove ${w.name}`}
+                    title="Remove from the team"
                   >
-                    Insert Mock A2A Worker URL
+                    ×
                   </button>
                 </div>
-                <input
-                  className="conn-input"
-                  placeholder="https://agent-service.internal/api/a2a/v1 or http://localhost:3000/api/a2a/mock-worker"
-                  value={externalForm.endpointUrl}
-                  onChange={(e) => setExternalForm({ ...externalForm, endpointUrl: e.target.value })}
-                />
-              </div>
-
-              <div className="conn-form-field">
-                <label className="conn-label">Authentication Token (Optional)</label>
-                <input
-                  className="conn-input"
-                  type="password"
-                  placeholder="Bearer token or API key if endpoint is protected"
-                  value={externalForm.apiKey}
-                  onChange={(e) => setExternalForm({ ...externalForm, apiKey: e.target.value })}
-                />
-              </div>
-
-              <div className="conn-modal-foot">
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => setShowAddExternalModal(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={addExternalWorker}
-                  disabled={!externalForm.name.trim() || !externalForm.endpointUrl.trim()}
-                >
-                  Add External Agent to Swarm
-                </button>
-              </div>
-            </div>
+              );
+            })}
           </div>
+        )}
+
+        <div className="ab-row" style={{ marginTop: 10 }}>
+          <select className="input" style={{ maxWidth: 360 }} value={selectedNewWorker} onChange={(e) => setSelectedNewWorker(e.target.value)}>
+            <option value="">Add a workspace agent…</option>
+            {unassignedAgents.map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+          <button type="button" className="btn" onClick={addInternalWorker} disabled={!selectedNewWorker}>Add</button>
+          <button type="button" className="btn btn-ghost" onClick={() => setShowAddExternalModal(true)}>+ External agent</button>
         </div>
-      )}
+        {feedbackMsg?.kind === "err" && <div className="error" style={{ marginTop: 10 }}>{feedbackMsg.text}</div>}
+      </div>
 
-      {/* Dispatch Swarm Modal */}
-      {showDispatchModal && (
-        <div className="conn-modal-overlay" onClick={() => setShowDispatchModal(false)}>
-          <div className="conn-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
-            <div className="conn-modal-head">
-              <div className="conn-modal-title-group">
-                <span style={{ fontSize: 24 }}>⚡</span>
-                <div>
-                  <h3 className="conn-modal-title">Dispatch Multi-Agent Swarm</h3>
-                  <div className="conn-modal-subtitle">
-                    {agentName} will orchestrate {swarm.workers.length} specialist sub-agents
-                  </div>
-                </div>
-              </div>
-              <button
-                type="button"
-                className="conn-modal-close"
-                onClick={() => setShowDispatchModal(false)}
-              >
-                ✕
-              </button>
+      {showAddExternalModal && (
+        <div className="modal-back" onMouseDown={() => setShowAddExternalModal(false)}>
+          <div className="panel modal" role="dialog" aria-modal="true" aria-labelledby="ab-ext-title" onMouseDown={(e) => e.stopPropagation()} style={{ width: "min(520px, 100%)" }}>
+            <div className="eyebrow">Add to the team</div>
+            <h2 id="ab-ext-title" style={{ margin: "2px 0 6px", fontSize: 17 }}>An external agent</h2>
+            <p className="help" style={{ marginTop: 0 }}>An agent running outside Agent Studio that speaks the A2A protocol.</p>
+            <div className="stack-sm">
+              <label className="ab-field">
+                <span className="ab-label">Name</span>
+                <input className="input" value={externalForm.name} placeholder="e.g. Market data agent" onChange={(e) => setExternalForm({ ...externalForm, name: e.target.value })} />
+              </label>
+              <label className="ab-field">
+                <span className="ab-label">What it should handle</span>
+                <input className="input" value={externalForm.role} placeholder="e.g. Pull FX rates for the period" onChange={(e) => setExternalForm({ ...externalForm, role: e.target.value })} />
+              </label>
+              <label className="ab-field">
+                <span className="ab-label">Endpoint URL</span>
+                <input className="input mono" value={externalForm.endpointUrl} placeholder="https://agent-service.internal/api/a2a/v1" onChange={(e) => setExternalForm({ ...externalForm, endpointUrl: e.target.value })} />
+              </label>
+              <label className="ab-field">
+                <span className="ab-label">Access token <em>— optional</em></span>
+                <input className="input" type="password" value={externalForm.apiKey} placeholder="If the endpoint is protected" onChange={(e) => setExternalForm({ ...externalForm, apiKey: e.target.value })} />
+              </label>
             </div>
-
-            <div className="conn-modal-body">
-              <div className="conn-form-field">
-                <label className="conn-label">Swarm Objective / User Directive</label>
-                <textarea
-                  className="conn-input"
-                  rows={4}
-                  placeholder="e.g. Conduct complete quarterly financial reconciliation: analyze raw transactions, synthesize variance report, and verify compliance."
-                  value={dispatchPrompt}
-                  onChange={(e) => setDispatchPrompt(e.target.value)}
-                />
-              </div>
-
-              <div className="swarm-dispatch-preview-box">
-                <div style={{ fontSize: 12, fontWeight: 600, color: "#475569", marginBottom: 6 }}>
-                  Execution Plan:
-                </div>
-                <div style={{ fontSize: 12, color: "#1e293b", lineHeight: 1.5 }}>
-                  1. 👑 <strong>{agentName}</strong> receives prompt and oversees strategy (
-                  <em>{swarm.strategy}</em>).
-                  <br />
-                  2. 🤖 Dispatches to:{" "}
-                  {swarm.workers.map((w) => `${w.name} (${w.type === "external" || w.endpointUrl ? "External A2A" : "Internal"})`).join(", ")}.
-                  <br />
-                  3. 📊 Collects deliverables and compiles the consolidated final result.
-                </div>
-              </div>
-
-              <div className="conn-modal-foot">
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => setShowDispatchModal(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={dispatchSwarm}
-                  disabled={dispatching}
-                >
-                  {dispatching ? "Dispatching Swarm…" : "Launch Swarm Execution"}
-                </button>
-              </div>
+            <div className="panel-foot">
+              <button type="button" className="btn" onClick={() => setShowAddExternalModal(false)}>Cancel</button>
+              <button type="button" className="btn btn-primary" onClick={addExternalWorker} disabled={!externalForm.name.trim() || !externalForm.endpointUrl.trim()}>
+                Add agent
+              </button>
             </div>
           </div>
         </div>

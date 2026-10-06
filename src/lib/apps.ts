@@ -13,6 +13,8 @@ export interface EmbeddedApp {
   position?: number;
   is_builtin?: boolean;
   created_by?: string | null;
+  /** Who added it, when known. */
+  created_by_name?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -156,7 +158,8 @@ export async function listApps(orgId: string): Promise<EmbeddedApp[]> {
   try {
     dbRows = await q<EmbeddedApp>(
       `select id, org_id, name, description, url, category, icon, display_mode, permissions,
-              position, created_by, created_at, updated_at
+              position, created_by, created_at, updated_at,
+              (select name from users where id = apps.created_by) as created_by_name
          from apps
         where org_id = $1
         order by position asc, created_at desc`,

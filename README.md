@@ -76,15 +76,14 @@ Requires Node 22.9+ and Postgres 14+.
 cp .env.example .env      # DATABASE_URL, ANTHROPIC_API_KEY, AUTH_SECRET, CRON_SECRET, APP_URL
 npm install
 npm run db:setup          # applies db/schema.sql, safe to re-run
-npm run dev               # http://localhost:3000
-npm run scheduler         # second terminal — fires agents that are due
+npm run dev               # http://localhost:3000, plus the scheduler once the app is healthy
 ```
 
 Open the app, choose **Create a workspace**, and you're in. Add connections under Connections; they are encrypted at rest with `AUTH_SECRET` and never returned to the browser.
 
 `ANTHROPIC_API_KEY` is the fallback for workspaces without their own Anthropic connection. It is needed for the two model-backed paths — compiling a brief into a spec, and running an agent. Everything else works without it.
 
-**The scheduler is a separate process.** It holds no schedule logic and touches no database: it wakes once a minute and asks `/api/cron` to fire whatever is due, authenticated with `CRON_SECRET`. The same endpoint works behind system cron or a platform scheduler instead, so the bundled process is a convenience rather than a dependency.
+**The scheduler is a separate process.** It holds no schedule logic and touches no database: it wakes once a minute and asks `/api/cron` to fire whatever is due, authenticated with `CRON_SECRET`. The same endpoint works behind system cron or a platform scheduler instead, so the bundled process is a convenience rather than a dependency. `npm run dev` and `npm run start` (`scripts/with-scheduler.mjs`) start it alongside the web app once the app is healthy, calling it on 127.0.0.1, and stopping either stops both; `npm run dev:web` and `npm run start:web` run the web app alone.
 
 ### Other scripts
 
@@ -116,8 +115,10 @@ On a container host — Railway, Render, Fly — run two services from the same 
 
 | Service | Command | Notes |
 |---|---|---|
-| web | `npm run start` | Port 3000, volume mounted at `/data`, health check on `/api/health` |
+| web | `npm run start:web` | Port 3000, volume mounted at `/data`, health check on `/api/health` |
 | scheduler | `npm run scheduler` | No port, no volume. Set `APP_URL` to the web service |
+
+Or run a single service with `npm run start` (the image default), which runs the scheduler inside the web container. See `deploy/README.md` for Google Cloud.
 
 Run `npm run db:setup` once against the production database before first boot; it is idempotent and safe to repeat on every deploy.
 

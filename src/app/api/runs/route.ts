@@ -55,7 +55,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const budget = await budgetCheck(u.orgId);
+  const budget = await budgetCheck(u.orgId, agentId);
   if (!budget.ok) return NextResponse.json({ error: budget.reason }, { status: 402 });
 
   const runId = await startRun({

@@ -1,21 +1,88 @@
 import { NextResponse } from "next/server";
 import { q, one } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { decrypt } from "@/lib/crypto";
+import { decrypt, encrypt } from "@/lib/crypto";
 import { audit } from "@/lib/ai";
+import { missingFor } from "@/lib/connection-types";
+import { anthropicUsage, recordUsage } from "@/lib/metering";
 
 export const runtime = "nodejs";
+
+/**
+ * Edits a connection in place, so a wrong URL or an expired token is fixed
+ * without breaking the agents attached to it. An empty secret keeps the stored one.
+ */
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const u = await requireUser();
+  const { id } = await params;
+  const c = await one<any>(`select id, kind, config, secret_enc from connections where id = $1 and org_id = $2`, [id, u.orgId]);
+  if (!c) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const { name, config, secret } = await req.json().catch(() => ({}));
+  // Settings not on the form (a REST connection's extra headers) are kept; only the old health cache goes.
+  const { health: _health, ...next }: Record<string, any> = { ...(c.config || {}), ...(config || {}) };
+  const newSecret = typeof secret === "string" && secret.trim() ? secret.trim() : null;
+  const missing = missingFor(c.kind, next, !!newSecret || !!c.secret_enc);
+  if (missing) return NextResponse.json({ error: missing }, { status: 400 });
+
+  const row = await one<any>(
+    `update connections set name = coalesce(nullif($3, ''), name), config = $4, secret_enc = coalesce($5, secret_enc)
+      where id = $1 and org_id = $2 returning id, name, kind, config, created_at`,
+    [id, u.orgId, String(name ?? "").trim(), JSON.stringify(next), newSecret ? encrypt(newSecret) : null],
+  );
+  await audit(u.orgId, u, "Edited connection", "connection", id, { name: row.name, kind: row.kind, secretReplaced: !!newSecret });
+  return NextResponse.json({ connection: row });
+}
 
 export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const u = await requireUser();
   const { id } = await params;
-  await q(`delete from connections where id = $1 and org_id = $2`, [id, u.orgId]);
-  await audit(u.orgId, u, "Removed connection", "connection", id, {});
+  const gone = await one<any>(`delete from connections where id = $1 and org_id = $2 returning name, kind`, [id, u.orgId]);
+  await audit(u.orgId, u, "Removed connection", "connection", id, gone ? { name: gone.name, kind: gone.kind } : {});
   return NextResponse.json({ ok: true });
 }
 
-/** Proves the credential works before an agent depends on it. */
-export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
+/** A connection's history from the audit trail: who added, edited, tested it and when. */
+export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
+  const u = await requireUser();
+  const { id } = await params;
+  const c = await one<any>(`select id from connections where id = $1 and org_id = $2`, [id, u.orgId]);
+  if (!c) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const activity = await q<any>(
+    `select action, actor_name, detail, at from audit_events
+      where org_id = $1 and entity = 'connection' and entity_id = $2
+      order by at desc limit 25`,
+    [u.orgId, id],
+  );
+  return NextResponse.json({ activity });
+}
+
+/**
+ * Proves the credential works before an agent depends on it. The result is kept
+ * on the connection (config.lastTest) and in the audit trail, so "last tested"
+ * survives a reload and shows who tested it.
+ */
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const res = await testConnection(req, ctx);
+  try {
+    const j = await res.clone().json();
+    if (typeof j.ok === "boolean") {
+      const u = await requireUser();
+      const { id } = await ctx.params;
+      const lastTest = { ok: j.ok, detail: String(j.detail ?? "").slice(0, 300), at: new Date().toISOString(), by: u.name };
+      await q(`update connections set config = coalesce(config, '{}'::jsonb) || jsonb_build_object('lastTest', $3::jsonb) where id = $1 and org_id = $2`, [
+        id,
+        u.orgId,
+        JSON.stringify(lastTest),
+      ]);
+      await audit(u.orgId, u, j.ok ? "Tested connection: working" : "Tested connection: failed", "connection", id, { detail: lastTest.detail });
+    }
+  } catch {
+    /* the answer still goes back even if it could not be recorded */
+  }
+  return res;
+}
+
+async function testConnection(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const u = await requireUser();
   const { id } = await params;
   const c = await one<any>(`select * from connections where id = $1 and org_id = $2`, [id, u.orgId]);
@@ -59,6 +126,14 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       await t.verify();
       return NextResponse.json({ ok: true, detail: `${c.config.host} accepted the credentials` });
     }
+    if (c.kind === "gemini") {
+      // Listing models proves the key without spending anything.
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(secret)}`, {
+        signal: AbortSignal.timeout(15000),
+      });
+      if (res.ok) return NextResponse.json({ ok: true, detail: "Key accepted by Google Gemini" });
+      return NextResponse.json({ ok: false, detail: res.status === 400 || res.status === 403 ? "The API key was rejected." : `Gemini returned HTTP ${res.status}` });
+    }
     if (c.kind === "anthropic") {
       const model = c.config?.model?.trim() || process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
       const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -67,7 +142,12 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
         body: JSON.stringify({ model, max_tokens: 4, messages: [{ role: "user", content: "Reply with: ok" }] }),
         signal: AbortSignal.timeout(20000),
       });
-      if (res.ok) return NextResponse.json({ ok: true, detail: `Key accepted · ${model} responded` });
+      if (res.ok) {
+        // A real (tiny) call, so it is recorded; it is not blocked at a limit, since checking a key must always work.
+        const body = await res.json().catch(() => ({}));
+        await recordUsage({ orgId: u.orgId, feature: "key_test", userId: u.id }, "anthropic", model, anthropicUsage(body));
+        return NextResponse.json({ ok: true, detail: `Key accepted · ${model} responded` });
+      }
       const body = await res.json().catch(() => ({}));
       const why = body?.error?.message || `HTTP ${res.status}`;
       return NextResponse.json({

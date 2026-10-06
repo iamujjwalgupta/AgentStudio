@@ -8,6 +8,10 @@ export const runtime = "nodejs";
 export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const u = await requireUser();
   const { id } = await params;
+  // Copying a skill out of the workspace is for the owner and admins only.
+  if (!u.canPublish) {
+    return NextResponse.json({ error: "Only the workspace owner and admins can download a skill." }, { status: 403 });
+  }
   const skill = await one<any>(
     `select id, name, label, description, instructions from skills where id = $1 and org_id = $2`,
     [id, u.orgId]

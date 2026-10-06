@@ -1,38 +1,13 @@
-"use client";
+import Link from "next/link";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-
+/**
+ * Opens the new-agent start screen. The agent itself is created there, once
+ * there is a brief to draft from, so a click alone saves nothing.
+ */
 export default function NewAgentButton() {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  async function create() {
-    setBusy(true);
-    setError("");
-    try {
-      const res = await fetch("/api/agents", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spec: null }),
-      });
-      if (!res.ok) throw new Error(`The agent could not be created (${res.status}).`);
-      const { agent } = await res.json();
-      router.push(`/agents/${agent.id}`);
-      router.refresh();
-    } catch (e: any) {
-      setError(e.message || "The agent could not be created.");
-      setBusy(false);
-    }
-  }
-
   return (
-    <div className="stack-sm">
-      <button className="btn btn-primary" onClick={create} disabled={busy}>
-        {busy ? "Creating…" : "New agent"}
-      </button>
-      {error && <div className="error">{error}</div>}
-    </div>
+    <Link href="/agents/new" className="btn btn-primary">
+      New agent
+    </Link>
   );
 }
