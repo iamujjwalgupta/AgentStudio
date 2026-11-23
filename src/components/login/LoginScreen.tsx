@@ -74,7 +74,7 @@ export default function LoginScreen() {
       setDone(true);
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       setTimeout(() => {
-        router.push("/agents");
+        router.push("/finance/personas");
         router.refresh();
       }, reduce ? 0 : 900);
     } catch {

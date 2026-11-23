@@ -10,6 +10,6 @@ export const metadata = { title: "Sign in · Agent Studio" };
 /** Signed-in people go straight to their agents, unless they followed an invitation link. */
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ invite?: string }> }) {
   const { invite } = await searchParams;
-  if (!invite && (await getUser())) redirect("/agents");
+  if (!invite && (await getUser())) redirect("/finance/personas");
   return <LoginScreen />;
 }

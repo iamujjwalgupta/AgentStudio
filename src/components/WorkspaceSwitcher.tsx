@@ -55,7 +55,7 @@ export default function WorkspaceSwitcher({
         return;
       }
       close();
-      router.push("/agents");
+      router.push("/finance/personas");
       router.refresh();
     } catch {
       setErr("Could not reach Agent Studio. Try again.");

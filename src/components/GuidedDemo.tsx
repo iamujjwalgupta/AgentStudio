@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { OPEN_ADMIN_EVENT } from "./SidebarNav";
 
 export const TOUR_STORAGE_KEY = "agent-studio.tour-completed";
 export const START_TOUR_EVENT = "agent-studio:start-tour";
@@ -37,9 +38,39 @@ const STEPS: TourStep[] = [
     ],
   },
   {
+    id: "personas",
+    target: "personas",
+    eyebrow: "Finance",
+    path: "/finance/personas",
+    actionLabel: "Open Finance Personas",
+    title: "Finance Personas",
+    description:
+      "Five finance leadership roles, from CFO to Treasury. Each has a cockpit of the metrics it owns, the actions waiting on it and the news that matters.",
+    highlights: [
+      "Open a metric to see its driver tree or the process behind it",
+      "Each action shows its root cause and the steps to resolve it",
+      "Illustrative content from the Finance Command Centre",
+    ],
+  },
+  {
+    id: "value-stream",
+    target: "value-stream",
+    eyebrow: "Finance",
+    path: "/finance/value-stream",
+    actionLabel: "Open Value Stream",
+    title: "Value Stream",
+    description:
+      "The finance value chain from L1 towers down to L3 activities, with signals showing where automation pays off first.",
+    highlights: [
+      "P2P, O2C and R2R open as full value-chain matrices",
+      "Each activity has a deep dive: the agent-based solution, business case and a case study",
+      "The agents shown here are a demo catalogue; Run shows a demonstration message",
+    ],
+  },
+  {
     id: "agents",
     target: "agents",
-    eyebrow: "Build",
+    eyebrow: "Studio",
     path: "/agents",
     actionLabel: "Open Agents",
     title: "Agents",
@@ -52,9 +83,24 @@ const STEPS: TourStep[] = [
     ],
   },
   {
+    id: "apps",
+    target: "apps",
+    eyebrow: "Studio",
+    path: "/apps",
+    actionLabel: "Open Apps",
+    title: "Apps",
+    description:
+      "Open your team's web apps and dashboards inside Agent Studio, next to your agents.",
+    highlights: [
+      "Each app loads the way it is set up — via Agent Studio, directly, or sandboxed",
+      "Ask an agent about the app you are looking at",
+      "Apps that add the bridge script can share what is on screen and ask for approvals",
+    ],
+  },
+  {
     id: "skills",
     target: "skills",
-    eyebrow: "Build",
+    eyebrow: "Admin",
     path: "/skills",
     actionLabel: "Open Skills",
     title: "Skills",
@@ -69,7 +115,7 @@ const STEPS: TourStep[] = [
   {
     id: "connections",
     target: "connections",
-    eyebrow: "Build",
+    eyebrow: "Admin",
     path: "/connections",
     actionLabel: "Open Connections",
     title: "Connections",
@@ -84,7 +130,7 @@ const STEPS: TourStep[] = [
   {
     id: "sandbox",
     target: "sandbox",
-    eyebrow: "Build",
+    eyebrow: "Admin",
     path: "/sandbox",
     actionLabel: "Open the Sandbox",
     title: "Sandbox",
@@ -97,24 +143,9 @@ const STEPS: TourStep[] = [
     ],
   },
   {
-    id: "apps",
-    target: "apps",
-    eyebrow: "Work",
-    path: "/apps",
-    actionLabel: "Open Apps",
-    title: "Apps",
-    description:
-      "Open your team's web apps and dashboards inside Agent Studio, next to your agents.",
-    highlights: [
-      "Each app loads the way it is set up — via Agent Studio, directly, or sandboxed",
-      "Ask an agent about the app you are looking at",
-      "Apps that add the bridge script can share what is on screen and ask for approvals",
-    ],
-  },
-  {
     id: "approvals",
     target: "approvals",
-    eyebrow: "Work",
+    eyebrow: "Admin",
     path: "/approvals",
     actionLabel: "Open Approvals",
     title: "Approvals",
@@ -129,7 +160,7 @@ const STEPS: TourStep[] = [
   {
     id: "runs",
     target: "runs",
-    eyebrow: "Work",
+    eyebrow: "Admin",
     path: "/runs",
     actionLabel: "Open Runs",
     title: "Runs",
@@ -144,7 +175,7 @@ const STEPS: TourStep[] = [
   {
     id: "usage",
     target: "usage",
-    eyebrow: "Oversee",
+    eyebrow: "Admin",
     path: "/usage",
     actionLabel: "Open Usage & limits",
     title: "Usage & limits",
@@ -159,7 +190,7 @@ const STEPS: TourStep[] = [
   {
     id: "audit",
     target: "audit",
-    eyebrow: "Oversee",
+    eyebrow: "Admin",
     path: "/audit",
     actionLabel: "Open the Audit trail",
     title: "Audit trail",
@@ -174,7 +205,7 @@ const STEPS: TourStep[] = [
   {
     id: "members",
     target: "members",
-    eyebrow: "Workspace",
+    eyebrow: "Admin",
     path: "/members",
     actionLabel: "Open Members",
     title: "Members",
@@ -188,7 +219,7 @@ const STEPS: TourStep[] = [
   {
     id: "shares",
     target: "shares",
-    eyebrow: "Workspace",
+    eyebrow: "Admin",
     path: "/shares",
     actionLabel: "Open Shares",
     title: "Shares",
@@ -207,6 +238,7 @@ const STEPS: TourStep[] = [
     description: "Who you are signed in as, and this tour — relaunch it any time from Guided Demo.",
     highlights: [
       "Switch workspace from the card at the top of the sidebar",
+      "Everything after Agents and Apps lives under Admin; open or close it in the sidebar",
       "Shrink the sidebar to icons with the arrow button beside the name",
       "Use ← and → to move through the tour, and Esc to close it",
     ],
@@ -296,6 +328,7 @@ export default function GuidedDemo() {
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
       setWelcomeOpen(false);
+      window.dispatchEvent(new CustomEvent(OPEN_ADMIN_EVENT));
       setSteps(visibleSteps());
       setIndex(0);
       setActive(true);
@@ -425,6 +458,7 @@ export default function GuidedDemo() {
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
     setWelcomeOpen(false);
+    window.dispatchEvent(new CustomEvent(OPEN_ADMIN_EVENT));
     setSteps(visibleSteps());
     setIndex(0);
     setActive(true);

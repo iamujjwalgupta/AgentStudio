@@ -87,6 +87,29 @@ const PATHS: Record<string, React.ReactNode> = {
       <line x1="21" y1="12" x2="9" y2="12" />
     </>
   ),
+  personas: (
+    <>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20a6.5 6.5 0 0 1 13 0" />
+      <path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2a6.5 6.5 0 0 1 3.5 5.8" />
+    </>
+  ),
+  stream: (
+    <>
+      <path d="M2 6h6l2 3-2 3H2l2-3z" />
+      <path d="M10 6h6l2 3-2 3h-6l2-3z" />
+      <path d="M4 16h16M4 20h10" />
+    </>
+  ),
+  admin: (
+    <>
+      <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" />
+      <circle cx="16" cy="6" r="2" />
+      <circle cx="10" cy="12" r="2" />
+      <circle cx="18" cy="18" r="2" />
+    </>
+  ),
+  chevron: <polyline points="6 9 12 15 18 9" />,
   collapse: <polyline points="15 18 9 12 15 6" />,
 };
 
