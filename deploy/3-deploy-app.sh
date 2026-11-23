@@ -51,6 +51,13 @@ if [ "${SECRETS_MODE}" = "env" ]; then
     "STORAGE_DIR=/data/storage" "APP_URL=${APP_URL}"
   [ "${SERVICE_EXISTS}" = "1" ] && keep_live_env "${TMP_DIR}/service.yaml" \
     DATABASE_URL AUTH_SECRET CRON_SECRET STORAGE_DIR APP_URL "${RETIRED_SETTINGS[@]}"
+  # A new service set up beside an existing one (ENV_FROM_SERVICE in config.sh):
+  # start from the settings that service was given by hand.
+  if [ "${SERVICE_EXISTS}" = "0" ] && [ -n "${ENV_FROM_SERVICE:-}" ]; then
+    info "copying hand-added settings from the service '${ENV_FROM_SERVICE}'"
+    SERVICE="${ENV_FROM_SERVICE}" keep_live_env "${TMP_DIR}/service.yaml" \
+      DATABASE_URL AUTH_SECRET CRON_SECRET STORAGE_DIR APP_URL "${RETIRED_SETTINGS[@]}"
+  fi
   JOB_VALUE_ARGS=(--env-vars-file="${TMP_DIR}/job.yaml")
   SERVICE_VALUE_ARGS=(--env-vars-file="${TMP_DIR}/service.yaml")
 else
