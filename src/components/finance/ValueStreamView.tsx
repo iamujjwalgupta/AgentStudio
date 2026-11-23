@@ -150,6 +150,10 @@ function Matrix({ tower, m, box, keep }: { tower: Tower; m: MatrixConfig; box?: 
 
   return (
     <div className="panel fin-matrix">
+      <div className="fin-matrix-legend">
+        <span><span className="fin-count-key" aria-hidden="true">n</span> No. of assets/agents available</span>
+        <span><span className="fin-star-key" aria-hidden="true">★</span> {m.starLabel}</span>
+      </div>
       <div className="fin-matrix-scroll">
         <div className="fin-matrix-inner" style={{ ["--cols" as string]: m.columns.length }}>
           <div className="fin-phases">
@@ -179,10 +183,6 @@ function Matrix({ tower, m, box, keep }: { tower: Tower; m: MatrixConfig; box?: 
           </div>
         </div>
       </div>
-      <p className="fin-small dim fin-matrix-note">
-        Select a sub-process or activity to see the applications and agents behind it. Numbers count the assets and agents available.
-        {" "}<span className="fin-star-key">★</span> {m.starLabel}.
-      </p>
     </div>
   );
 }

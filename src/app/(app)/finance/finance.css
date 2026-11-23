@@ -238,7 +238,7 @@ a.fin-tile:hover .fin-tile-cta, a.fin-tile:focus-visible .fin-tile-cta { opacity
 .fin-col-name { font-size: 11.5px; font-weight: 600; line-height: 1.3; }
 .fin-col-count {
   position: absolute; top: -8px; right: -4px; min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px;
-  display: grid; place-items: center; font-family: var(--mono); font-size: 10px; font-weight: 600; color: #fff; background: var(--ink);
+  display: grid; place-items: center; font-family: var(--mono); font-size: 10px; font-weight: 600; color: #fff; background: var(--fin-purple);
   box-shadow: 0 0 0 2px #fff;
 }
 .fin-box {
@@ -251,10 +251,17 @@ a.fin-tile:hover .fin-tile-cta, a.fin-tile:focus-visible .fin-tile-cta { opacity
 .fin-box.starred { border-color: rgba(0,94,184,.42); }
 .fin-box.starred::after { content: "★"; position: absolute; top: 5px; right: 7px; font-size: 10px; color: var(--link); }
 .fin-box-count {
-  align-self: flex-start; margin-top: 3px; padding: 0 6px; border-radius: 999px;
-  font-family: var(--mono); font-size: 9.5px; line-height: 15px; color: var(--muted-2); background: #eef2f8;
+  align-self: flex-start; margin-top: 3px; min-width: 17px; padding: 0 5px; border-radius: 999px; text-align: center;
+  font-family: var(--mono); font-size: 9.5px; font-weight: 600; line-height: 16px; color: #fff; background: var(--fin-purple);
 }
-.fin-matrix-note { margin: 12px 0 0; }
+/* Asset/agent counts: KPMG purple, explained by the legend above the matrix. */
+.fin-matrix { --fin-purple: #7213ea; }
+.fin-matrix-legend { display: flex; align-items: center; gap: 8px 20px; flex-wrap: wrap; margin-bottom: 14px; font-size: 12.5px; color: var(--muted-2); }
+.fin-matrix-legend > span { display: inline-flex; align-items: center; gap: 7px; }
+.fin-count-key {
+  min-width: 19px; height: 19px; padding: 0 5px; border-radius: 999px; display: inline-grid; place-items: center;
+  font-family: var(--mono); font-size: 10px; font-weight: 600; color: #fff; background: var(--fin-purple);
+}
 .fin-star-key { color: var(--link); }
 
 .fin-app-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
