@@ -1,0 +1,20 @@
+# Line endings: LF in the repository and in every working copy, whatever the
+# machine's core.autocrlf says. The deploy scripts run in Cloud Shell (bash),
+# where a CRLF ending breaks them ($'\r': command not found).
+* text=auto eol=lf
+
+# Windows batch files need CRLF to run reliably in cmd.
+*.bat text eol=crlf
+
+# Binary: never converted or diffed as text.
+*.xlsx binary
+*.xls  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.woff binary
+*.woff2 binary
