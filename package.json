@@ -16,7 +16,6 @@
     "seed-skills": "node --env-file-if-exists=.env scripts/seed-skills.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
     "@duckdb/node-api": "^1.5.6-r.1",
     "@types/jszip": "^3.4.0",
     "bcryptjs": "^2.4.3",

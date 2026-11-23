@@ -57,8 +57,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const fails = validate(spec, connKindById);
   // Published means anyone can run it, so the model it runs on must be reachable.
   const engine = engineOf(spec);
-  await engineAccess(u.orgId, engine).catch(() =>
-    fails.push(`It runs on ${ENGINE_LABEL[engine]}, and this workspace has no key for it. Add one under Connections, or choose the other model in the Brief step.`),
+  await engineAccess(u.orgId, engine, spec.model, spec.providerConnectionId).catch((e: any) =>
+    fails.push(e?.message || `It runs on ${ENGINE_LABEL[engine]}, and this workspace has no key for it. An admin can add one under Connections.`),
   );
   if (fails.length) return NextResponse.json({ error: fails.join(" ") }, { status: 400 });
 

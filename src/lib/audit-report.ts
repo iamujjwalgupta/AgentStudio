@@ -11,7 +11,7 @@ export const AUDIT_CATEGORIES = {
   runs: { label: "Runs", entities: ["run", "cfo_run"] },
   skills: { label: "Skills", entities: ["skill"] },
   connections: { label: "Connections", entities: ["connection"] },
-  access: { label: "People & access", entities: ["user"] },
+  access: { label: "People & access", entities: ["user", "api_key"] },
   workspace: { label: "Workspace & limits", entities: ["org", "usage_limit", "document"] },
   apps: { label: "Apps", entities: ["app"] },
 } as const;
@@ -20,7 +20,7 @@ export type AuditCategory = keyof typeof AUDIT_CATEGORIES;
 /** Removing or retiring something. */
 const DESTRUCTIVE = `(e.action ~* '^(deleted|removed|retired|withdrew)' or e.action ~* '\\.delete$')`;
 /** Who can get in and with what rights, and refused or failed checks. */
-const SECURITY = `(e.action ~* '(password|signed in|role|invited|joined|removed a member|withdrew an invitation|refused)')`;
+const SECURITY = `(e.action ~* '(password|signed in|role|invited|joined|removed a member|withdrew an invitation|refused|api key)')`;
 
 export type AuditFilters = {
   q?: string;
@@ -121,6 +121,7 @@ export async function auditEvents(orgId: string, f: AuditFilters): Promise<{ eve
       : r.entity === "connection" && r.conn_exists ? `/connections`
       : r.entity === "app" && r.app_exists ? `/apps/${r.entity_id}`
       : r.entity === "usage_limit" ? `/usage`
+      : r.entity === "api_key" ? `/api-keys`
       : r.entity === "user" && r.action !== "Signed in" ? `/members`
       : null,
     destructive: r.destructive,

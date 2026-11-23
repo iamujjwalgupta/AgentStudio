@@ -39,7 +39,7 @@ Files uploaded on the form become documents the agent reads with its document to
 
 | Tool | Risk | Needs | What it actually does |
 |---|---|---|---|
-| Search the web | low | — | Executed server-side by the Anthropic API |
+| Search the web | low | — | The agent's own provider's web search (Gemini, Claude or OpenAI); for Azure and other providers, the first of those the workspace has a key for |
 | Fetch a web page | low | — | Retrieves a URL, extracts readable text |
 | Query a database | low | Postgres connection | Read-only SQL; write statements blocked unless the connection allows them |
 | Read an uploaded document | low | — | CSV, XLSX, PDF, DOCX, TXT parsing |
@@ -50,7 +50,7 @@ Files uploaded on the form become documents the agent reads with its document to
 
 Risk drives the default gate. Low risk runs automatically; medium and high cannot be published ungated.
 
-**Connections are standing credentials** — a ledger database, a mailbox, a Slack channel — provisioned once and granted to agents. They are not where per-run data goes; that is what the run form is for. A workspace can also hold its own **Anthropic** connection, which overrides the server's key and lets it bring its own model.
+**Connections are standing credentials** — a ledger database, a mailbox, a Slack channel — provisioned once and granted to agents. They are not where per-run data goes; that is what the run form is for. The **AI model keys** are connections too: **Google Gemini** is the default every agent runs on (it overrides any `GEMINI_API_KEY` on the server and sets the default model), and **Anthropic (Claude)**, **OpenAI**, **Azure OpenAI** and any **OpenAI-compatible** service (Mistral, Groq, DeepSeek, xAI, OpenRouter, Together, Ollama …) can be added beside it. Each agent picks its provider and model in the builder.
 
 
 ## Skills
@@ -73,7 +73,7 @@ Two consequences worth knowing:
 Requires Node 22.9+ and Postgres 14+.
 
 ```bash
-cp .env.example .env      # DATABASE_URL, ANTHROPIC_API_KEY, AUTH_SECRET, CRON_SECRET, APP_URL
+cp .env.example .env      # DATABASE_URL, AUTH_SECRET, CRON_SECRET, APP_URL
 npm install
 npm run db:setup          # applies db/schema.sql, safe to re-run
 npm run dev               # http://localhost:3000, plus the scheduler once the app is healthy
@@ -81,7 +81,9 @@ npm run dev               # http://localhost:3000, plus the scheduler once the a
 
 Open the app, choose **Create a workspace**, and you're in. Add connections under Connections; they are encrypted at rest with `AUTH_SECRET` and never returned to the browser.
 
-`ANTHROPIC_API_KEY` is the fallback for workspaces without their own Anthropic connection. It is needed for the two model-backed paths — compiling a brief into a spec, and running an agent. Everything else works without it.
+Agents run on **Google Gemini** by default. Add the Gemini key in the app under **Connections** (an admin does this once per workspace); `GEMINI_API_KEY` in `.env` is the fallback for a workspace without one. It is needed for the model-backed paths — drafting an agent from a brief, writing skills, running an agent and its web search, and Sandbox tests. Everything else works without it.
+
+An agent can instead run on **Anthropic (Claude)**, **OpenAI**, **Azure OpenAI** or an **OpenAI-compatible** service: add that key under Connections, then choose the provider in the agent's builder. Addresses typed for Azure and OpenAI-compatible services may not point at private networks unless `ALLOW_PRIVATE_MODEL_URLS=true` is set (for a self-hosted Ollama).
 
 **The scheduler is a separate process.** It holds no schedule logic and touches no database: it wakes once a minute and asks `/api/cron` to fire whatever is due, authenticated with `CRON_SECRET`. The same endpoint works behind system cron or a platform scheduler instead, so the bundled process is a convenience rather than a dependency. `npm run dev` and `npm run start` (`scripts/with-scheduler.mjs`) start it alongside the web app once the app is healthy, calling it on 127.0.0.1, and stopping either stops both; `npm run dev:web` and `npm run start:web` run the web app alone.
 
@@ -107,7 +109,7 @@ A `Dockerfile` is included and builds an image that serves the app and, with a d
 ```bash
 docker build -t agent-studio .
 docker run -p 3000:3000 -v agent-storage:/data \
-  -e DATABASE_URL=... -e AUTH_SECRET=... -e ANTHROPIC_API_KEY=... \
+  -e DATABASE_URL=... -e AUTH_SECRET=... \
   -e CRON_SECRET=... -e APP_URL=https://your-host agent-studio
 ```
 
@@ -153,7 +155,7 @@ Browser ─── Next.js App Router (server components + route handlers)
                 │                 Entry is guarded by a lease, so the same run is
                 │                 never stepped twice and its actions never repeat.
                 ├── lib/tools.ts       the eight executors above
-                ├── lib/ai.ts          Anthropic client, deterministic system-prompt builder
+                ├── lib/ai.ts          deterministic system-prompt builder, drafting (lib/models.ts: Gemini, Claude, OpenAI, Azure, OpenAI-compatible)
                 ├── lib/run-input.ts   form values → the run's opening message
                 ├── lib/schedule.ts    English → firing rule → next occurrence
                 ├── lib/spec-diff.ts   what changed between two versions, and whether it loosens

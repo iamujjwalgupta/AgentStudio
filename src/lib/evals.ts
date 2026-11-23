@@ -370,7 +370,6 @@ export async function runEvalSuite(
     const t0 = Date.now();
     
     // Simulate / execute test case against spec
-    const isMock = process.env.NODE_ENV === "test" || !process.env.ANTHROPIC_API_KEY;
     
     let deliverable = "";
     let toolsUsed: string[] = [];

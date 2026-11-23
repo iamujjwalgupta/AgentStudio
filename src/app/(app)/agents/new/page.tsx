@@ -4,7 +4,7 @@ import { q } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { SELECTABLE_TOOLS } from "@/lib/tools";
 import { domainTaxonomy, skillUsage } from "@/lib/agent-list";
-import { enginesFor } from "@/lib/models";
+import { enginesFor, workspaceKey } from "@/lib/models";
 import NewAgentStart, { type Template } from "@/components/NewAgentStart";
 
 export const dynamic = "force-dynamic";
@@ -34,18 +34,24 @@ export default async function NewAgentPage() {
        select name, brief, domain, process from r where rn <= 6 order by n desc, process, rn limit 60`,
       [u.orgId],
     ).catch(() => [] as Template[]),
-    // The Anthropic key powers the run itself; it is not a source an agent reads from.
-    q<any>(`select id, name, kind, config from connections where org_id = $1 and kind not in ('anthropic', 'gemini') order by name`, [u.orgId]),
+    // The model key powers the run itself; it is not a source an agent reads from.
+    q<any>(`select id, name, kind, config from connections where org_id = $1 and kind not in ('gemini', 'anthropic', 'openai', 'azure_openai', 'openai_compatible') order by name`, [u.orgId]),
     q<any>(`select id, name, label, description, instructions, status from skills where org_id = $1 order by label`, [u.orgId]),
     q<any>(`select id, name, description, archetype, status from agents where org_id = $1 and status <> 'retired' order by name`, [u.orgId]),
     domainTaxonomy(u.orgId).catch(() => []),
     skillUsage(u.orgId).catch(() => []),
     enginesFor(u.orgId),
   ]);
+  // A new agent starts on the workspace AI key; the builder can switch it to any other key.
+  const key = await workspaceKey(u.orgId).catch(() => null);
+  const defaultKey = key
+    ? { provider: key.provider, ...(key.provider !== "gemini" && key.connectionId ? { providerConnectionId: key.connectionId } : {}) }
+    : null;
 
   return (
     <NewAgentStart
       templates={templates}
+      defaultKey={defaultKey}
       ctx={{
         tools: SELECTABLE_TOOLS.map((t) => ({ id: t.id, label: t.label, description: t.description, risk: t.risk, needs: t.needs ?? null })),
         connections,

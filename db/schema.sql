@@ -399,7 +399,7 @@ create index if not exists idx_workspace_hidden_apps_org on workspace_hidden_app
 create table if not exists usage_events (
   id                 bigserial primary key,
   org_id             uuid not null references orgs(id) on delete cascade,
-  provider           text not null check (provider in ('anthropic', 'gemini')),
+  provider           text not null,
   model              text not null default '',
   feature            text not null,
   agent_id           uuid references agents(id) on delete set null,
@@ -413,6 +413,11 @@ create table if not exists usage_events (
   at                 timestamptz not null default now()
 );
 create index if not exists idx_usage_events_org_at on usage_events (org_id, at desc);
+-- The providers an agent can run on (lib/providers.ts). Replaced on every
+-- setup, so a database made when there were fewer providers takes the new ones.
+alter table usage_events drop constraint if exists usage_events_provider_check;
+alter table usage_events add constraint usage_events_provider_check
+  check (provider in ('gemini', 'anthropic', 'openai', 'azure_openai', 'openai_compatible'));
 create index if not exists idx_usage_events_run on usage_events (run_id);
 create index if not exists idx_usage_events_agent on usage_events (agent_id, at desc);
 
@@ -506,3 +511,33 @@ create index if not exists chats_owner_idx on chats (org_id, user_id, agent_id, 
 alter table runs add column if not exists chat_id uuid references chats(id) on delete set null;
 alter table runs add column if not exists message text;
 create index if not exists runs_chat_idx on runs (chat_id, started_at);
+
+-- The workspace AI key: the one model key platform drafting (an agent from a
+-- brief, a skill) runs on, chosen by a workspace admin. Strict: when it fails,
+-- drafting stops instead of trying another key. Agents run on their own key.
+-- null until first read (then seeded with the key the workspace drafted on
+-- before this setting existed), {} when none is chosen, else
+-- {"provider":"anthropic","connectionId":"<uuid>"} or
+-- {"provider":"gemini","source":"environment"} for the server's GEMINI_API_KEY.
+alter table orgs add column if not exists ai_key jsonb;
+
+-- Workspace API keys: how another application starts an agent with nobody
+-- signed in. Only a SHA-256 of the key is kept; the key itself is shown once,
+-- when it is created. agent_ids null means every agent in the workspace, else
+-- only those listed. A key runs published versions only (api/v1/.../invoke).
+create table if not exists api_keys (
+  id              uuid primary key default gen_random_uuid(),
+  org_id          uuid not null references orgs(id) on delete cascade,
+  name            text not null,
+  prefix          text not null,
+  key_hash        text not null unique,
+  agent_ids       uuid[],
+  created_by      uuid references users(id) on delete set null,
+  created_by_name text not null default '',
+  created_at      timestamptz not null default now(),
+  last_used_at    timestamptz,
+  revoked_at      timestamptz
+);
+create index if not exists api_keys_org_idx on api_keys (org_id, created_at desc);
+-- The key that started a run, so that key (and only it) can read the run back.
+alter table runs add column if not exists api_key_id uuid references api_keys(id) on delete set null;

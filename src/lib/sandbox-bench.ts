@@ -1,8 +1,7 @@
 import { one, q } from "./db";
 import { decrypt } from "./crypto";
-import { modelAccess } from "./ai";
 import { SELECTABLE_TOOLS } from "./tools";
-import { anthropicUsage, assertWithinLimits, geminiUsage, recordUsage } from "./metering";
+import { assertWithinLimits, geminiUsage, recordUsage } from "./metering";
 import { parseAdkAgent, ADK_TEMPLATES } from "./adk-parser";
 import { parseLangChainAgent, LANGCHAIN_TEMPLATES } from "./langchain-parser";
 import { parseFoundryAgent, FOUNDRY_TEMPLATES } from "./foundry-parser";
@@ -162,7 +161,7 @@ export function allExamples() {
 
 // ---- models -------------------------------------------------------------------------
 
-export type Engine = "anthropic" | "gemini";
+export type Engine = "gemini";
 export type EngineInfo = { id: Engine; label: string; model: string };
 
 async function geminiKey(orgId: string) {
@@ -171,15 +170,9 @@ async function geminiKey(orgId: string) {
   return key ? { key, model: row?.config?.model?.trim() || "gemini-2.5-flash" } : null;
 }
 
-/** The models this workspace can test with — only those it has a key for. */
+/** The model this workspace can test with: Gemini, when it has the key. */
 export async function availableEngines(orgId: string): Promise<EngineInfo[]> {
   const out: EngineInfo[] = [];
-  try {
-    const a = await modelAccess(orgId);
-    out.push({ id: "anthropic", label: "Claude", model: a.model });
-  } catch {
-    /* no Anthropic key */
-  }
   const g = await geminiKey(orgId);
   if (g) out.push({ id: "gemini", label: "Gemini", model: g.model });
   return out;
@@ -228,53 +221,6 @@ export async function benchStep(opts: {
 }): Promise<StepResult> {
   const { orgId, userId, engine, agent, tools, transcript } = opts;
   const system = systemPrompt(agent);
-
-  if (engine === "anthropic") {
-    const { apiKey, model } = await modelAccess(orgId);
-    const messages: any[] = [];
-    for (const t of transcript) {
-      if (t.role === "user") messages.push({ role: "user", content: t.text });
-      else if (t.role === "agent") {
-        const blocks =
-          t.engine === "anthropic" && Array.isArray(t.raw)
-            ? t.raw
-            : [
-                ...(t.text ? [{ type: "text", text: t.text }] : []),
-                ...(t.calls || []).map((c) => ({ type: "tool_use", id: c.id, name: c.name, input: c.args ?? {} })),
-              ];
-        if (blocks.length) messages.push({ role: "assistant", content: blocks });
-      } else {
-        messages.push({
-          role: "user",
-          content: t.results.map((r) => ({ type: "tool_result", tool_use_id: r.id, content: typeof r.output === "string" ? r.output : JSON.stringify(r.output) })),
-        });
-      }
-    }
-    await assertWithinLimits(orgId, "anthropic");
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model,
-        max_tokens: 2048,
-        system,
-        messages,
-        tools: tools.length ? tools.map((t) => ({ name: t.name, description: t.description || t.name, input_schema: objectSchema(t.parameters) })) : undefined,
-      }),
-      signal: AbortSignal.timeout(60000),
-    });
-    const data = await res.json().catch(() => ({}));
-    await recordUsage({ orgId, feature: "sandbox", userId }, "anthropic", model, anthropicUsage(data));
-    if (!res.ok) throw new Error(data?.error?.message || `Claude returned HTTP ${res.status}`);
-    const content = data.content || [];
-    return {
-      engine,
-      model,
-      raw: content,
-      text: content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n").trim(),
-      calls: content.filter((b: any) => b.type === "tool_use").map((b: any) => ({ id: b.id, name: b.name, args: b.input ?? {}, sample: sampleResult(b.name, b.input ?? {}) })),
-    };
-  }
 
   const g = await geminiKey(orgId);
   if (!g) throw new Error("No Gemini key is set up. Add one under Connections.");

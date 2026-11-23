@@ -38,10 +38,10 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       } else {
         detail = "Endpoint reachable";
       }
-    } else if (c.kind === "anthropic") {
-      detail = "Anthropic API Gateway operational";
     } else if (c.kind === "gemini") {
-      detail = "Google Gemini Engine operational";
+      detail = "Google Gemini key on file";
+    } else if (c.kind === "anthropic" || c.kind === "openai" || c.kind === "azure_openai" || c.kind === "openai_compatible") {
+      detail = "Model key on file. Use Test to check it with the provider.";
     } else {
       detail = "Service heartbeat verified";
     }

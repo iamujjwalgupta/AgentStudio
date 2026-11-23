@@ -1,12 +1,13 @@
 import { one, q } from "./db";
 import { notify, approverEmails } from "./notify";
 import { costOf } from "./pricing";
+import { PROVIDERS, PROVIDER_IDS, type ProviderId } from "./providers";
 
 /**
  * Token metering: every model call is recorded in usage_events, and checked
  * against the workspace's limits before it is made.
  *
- * Limits sit on a model key (the Anthropic or the Gemini key) or on one agent,
+ * Limits sit on a model key (one per provider: Gemini, Anthropic, OpenAI …) or on one agent,
  * per calendar month or day in the workspace timezone, in tokens and/or dollars;
  * whichever is reached first applies. At a limit, new calls on that key or by
  * that agent are refused until the limit is raised or the period turns.
@@ -15,7 +16,7 @@ import { costOf } from "./pricing";
  * input read or written.
  */
 
-export type Provider = "anthropic" | "gemini";
+export type Provider = ProviderId;
 export type Feature = "agent_run" | "drafting" | "skill_writing" | "web_search" | "sandbox" | "key_test";
 
 export const FEATURE_LABEL: Record<Feature, string> = {
@@ -26,7 +27,7 @@ export const FEATURE_LABEL: Record<Feature, string> = {
   sandbox: "Sandbox",
   key_test: "Key tests",
 };
-export const PROVIDER_LABEL: Record<Provider, string> = { anthropic: "Anthropic (Claude)", gemini: "Google Gemini" };
+export const PROVIDER_LABEL: Record<Provider, string> = Object.fromEntries(PROVIDER_IDS.map((p) => [p, PROVIDERS[p].label])) as Record<Provider, string>;
 
 export type MeterCtx = {
   orgId: string;
@@ -200,55 +201,6 @@ export async function recordUsage(ctx: MeterCtx, provider: Provider, model: stri
     // Metering must never break the work it measures.
   }
 }
-
-/** An Anthropic Messages call, checked against the limits first and recorded after. */
-/**
- * An Anthropic API failure in words a workspace admin can act on, instead of
- * the raw "400 {"type":"error",...}" the SDK puts in its message.
- */
-export function plainModelError(e: any): Error {
-  const status = Number(e?.status) || 0;
-  const detail = String(e?.error?.error?.message || e?.message || e || "");
-  let text: string;
-  if (/credit balance is too low/i.test(detail)) {
-    text = "The Anthropic account behind this workspace's key has run out of credit. An admin can add credit in the Anthropic Console (Plans & Billing), or set a different key under Connections.";
-  } else if (status === 401 || /invalid x-api-key|authentication/i.test(detail)) {
-    text = "The workspace's Anthropic key was rejected. An admin can check or replace it under Connections.";
-  } else if (status === 403) {
-    text = "The workspace's Anthropic key is not allowed to do this. An admin can check its permissions in the Anthropic Console.";
-  } else if (status === 429) {
-    text = "Anthropic is rate-limiting this workspace's key. Wait a minute and try again.";
-  } else if (status === 529 || /overloaded/i.test(detail)) {
-    text = "Anthropic is overloaded right now. Try again in a few minutes.";
-  } else if (status) {
-    text = `The model call failed (${status}): ${detail.replace(/^\d{3}\s+/, "").slice(0, 300)}`;
-  } else {
-    return e instanceof Error ? e : new Error(detail || "The model call failed.");
-  }
-  return Object.assign(new Error(text), { status });
-}
-
-export async function meteredAnthropic<T = any>(client: any, params: any, ctx: MeterCtx): Promise<T> {
-  await assertWithinLimits(ctx.orgId, "anthropic", ctx.agentId);
-  const res = await client.messages.create(params).catch((e: any) => {
-    throw plainModelError(e);
-  });
-  await recordUsage(ctx, "anthropic", params.model, {
-    input: res?.usage?.input_tokens,
-    output: res?.usage?.output_tokens,
-    cacheRead: res?.usage?.cache_read_input_tokens,
-    cacheWrite: res?.usage?.cache_creation_input_tokens,
-  });
-  return res as T;
-}
-
-/** Usage out of a raw Anthropic HTTP response body (for calls made with fetch). */
-export const anthropicUsage = (body: any): TokenUsage => ({
-  input: body?.usage?.input_tokens,
-  output: body?.usage?.output_tokens,
-  cacheRead: body?.usage?.cache_read_input_tokens,
-  cacheWrite: body?.usage?.cache_creation_input_tokens,
-});
 
 /** Usage out of a Gemini generateContent response body. */
 export const geminiUsage = (body: any): TokenUsage => ({

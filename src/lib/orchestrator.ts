@@ -1,12 +1,12 @@
 import path from "path";
 import { q, one } from "./db";
 import { buildSystemPrompt, audit } from "./ai";
-import { engineAccess, engineOf, modelAccess, modelStep, type EngineAccess } from "./models";
+import { engineAccess, engineOf, modelStep, type Engine, type EngineAccess } from "./models";
 import { costOf } from "./pricing";
 import { checkLimits, recordUsage } from "./metering";
 import { STORAGE_ROOT } from "./storage";
 import { notify, approverEmails } from "./notify";
-import { TOOLS, toolById, anthropicTools, type ConnRow, type ToolContext } from "./tools";
+import { TOOLS, toolById, modelTools, type ConnRow, type ToolContext } from "./tools";
 import { skillsFor } from "./skills";
 import { normaliseInputs, specSkillIds, type AgentSpec } from "./types";
 import { maskPII, checkRateLimit } from "./guardrails";
@@ -25,25 +25,15 @@ type RunRow = {
   chat_id?: string | null;
 };
 
-type ToolModel = { apiKey: string; model: string; engine: "anthropic" | "gemini" };
+type ToolModel = { apiKey: string; model: string; engine: Engine; providerConnectionId?: string };
 
 /**
- * The key for actions that call a model of their own (web search), on the
- * agent's own engine: an agent on Gemini searches with Google on the Gemini key,
- * one on Claude with Anthropic. Empty when there is none; the action says so.
+ * What actions that call a model of their own (web search) need: the agent's
+ * provider and model. The action resolves the key itself, and falls back to
+ * another provider's when the agent's has no search of its own.
  */
-async function toolModel(orgId: string, spec: AgentSpec): Promise<ToolModel> {
-  const engine = engineOf(spec);
-  try {
-    if (engine === "gemini") {
-      const a = await engineAccess(orgId, "gemini", spec.model);
-      return { apiKey: a.apiKey, model: a.model, engine };
-    }
-    const a = await modelAccess(orgId);
-    return { apiKey: a.apiKey, model: a.model, engine };
-  } catch {
-    return { apiKey: "", model: "", engine };
-  }
+async function toolModel(_orgId: string, spec: AgentSpec): Promise<ToolModel> {
+  return { apiKey: "", model: String(spec.model || ""), engine: engineOf(spec), providerConnectionId: spec.providerConnectionId };
 }
 
 async function loadContext(
@@ -72,6 +62,7 @@ async function loadContext(
     apiKey: model.apiKey,
     model: model.model,
     engine: model.engine,
+    providerConnectionId: model.providerConnectionId,
     runId,
     agentId,
   };
@@ -208,6 +199,8 @@ export async function startRun(opts: {
   message?: string;
   /** A later turn of a conversation: it answers the new request rather than redoing the whole procedure. */
   followUp?: boolean;
+  /** The workspace API key that started it, when another application did. */
+  apiKeyId?: string;
 }) {
   // 1. Enforce per-agent rate limit
   if (opts.spec.guardrails?.rateLimitRpm) {
@@ -238,8 +231,8 @@ export async function startRun(opts: {
   }
 
   const run = await one<any>(
-    `insert into runs (org_id, agent_id, version, spec, trigger, input, state, started_by, dry_run, inputs, parent_run_id, chat_id, message)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning id`,
+    `insert into runs (org_id, agent_id, version, spec, trigger, input, state, started_by, dry_run, inputs, parent_run_id, chat_id, message, api_key_id)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id`,
     [
       opts.orgId,
       opts.agentId,
@@ -256,6 +249,7 @@ export async function startRun(opts: {
       opts.parentRunId ?? null,
       opts.chatId ?? null,
       opts.message ?? null,
+      opts.apiKeyId ?? null,
     ],
   );
   await audit(opts.orgId, opts.user, "Started run", "run", run.id, {
@@ -333,7 +327,7 @@ export async function advance(
   const engine = engineOf(spec);
   try {
     // Resolved once per advance, so a key changed mid-run is picked up on resume.
-    access = await engineAccess(run.org_id, engine, spec.model);
+    access = await engineAccess(run.org_id, engine, spec.model, spec.providerConnectionId);
     model = access.model;
     ctx = await loadContext(
       run.org_id,
@@ -377,7 +371,7 @@ export async function advance(
     // database attaches the file to its database queries instead.
     ...(takesFile && !spec.tools.some((t) => t.id === "sql_query") ? ["query_files"] : []),
   ];
-  const tools = anthropicTools(spec.tools, runtimeTools);
+  const tools = modelTools(spec.tools, runtimeTools);
   // Unlisted tools default to needing approval, which is the right instinct for
   // anything the spec did not grant. An implicit tool reaches nothing outside
   // the workspace's own writing, so it is exempt rather than permanently stuck;

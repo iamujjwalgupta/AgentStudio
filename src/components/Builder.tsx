@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   ARCHETYPES, FILE_KINDS, INPUT_TYPES, acceptedExtensions, emptySpec, inputKey, normaliseInputs, specSkillIds, type AgentSpec, type SpecInput,
 } from "@/lib/types";
+import { PROVIDERS, providerOf, suggestedModels, type EngineInfo, type ProviderId } from "@/lib/providers";
 import { KindIcon } from "@/components/ConnectorIcons";
 import { kindLabel } from "@/lib/connection-types";
 import { formatDate, formatDateTime, formatWhen } from "@/lib/format";
@@ -1458,61 +1459,96 @@ function DomainPicker({ domain, onChange, taxonomy }: { domain: string; onChange
 
 // ---- the model an agent runs on --------------------------------------------------------
 
-export type EngineInfo = { id: "anthropic" | "gemini"; label: string; model: string };
-const ENGINE_NAMES = { anthropic: "Claude (Anthropic)", gemini: "Gemini (Google)" } as const;
-/** Kept in step with ENGINE_MODELS in lib/models.ts, with a word on what each is for. */
-const ENGINE_MODEL_CHOICES: Record<"anthropic" | "gemini", { id: string; note: string }[]> = {
-  anthropic: [
-    { id: "claude-sonnet-4-6", note: "balanced" },
-    { id: "claude-opus-4-6", note: "strongest, costs more" },
-    { id: "claude-haiku-4-5", note: "fastest, cheapest" },
-  ],
-  gemini: [
-    { id: "gemini-2.5-pro", note: "strongest — for long, multi-step work" },
-    { id: "gemini-2.5-flash", note: "cheap — for short, simple work" },
-    { id: "gemini-2.5-flash-lite", note: "cheapest" },
-  ],
-};
-const engineOfSpec = (spec: AgentSpec): "anthropic" | "gemini" => (spec.engine === "gemini" ? "gemini" : "anthropic");
+export type { EngineInfo };
+
+/** The model an agent saved on a spec, when it suits its provider (a Gemini model for Gemini, any other id elsewhere). */
+function modelFor(spec: AgentSpec, provider: ProviderId): string {
+  const m = String(spec.model || "").trim();
+  if (!m) return "";
+  if (provider === "gemini") return PROVIDERS.gemini.models.some((x) => x.id === m) ? m : "";
+  return provider !== "openai_compatible" && m.startsWith("gemini") ? "" : m;
+}
+
+/** The key an agent's provider choice points at, among the workspace's keys. */
+function keyFor(spec: AgentSpec, engines: EngineInfo[]): EngineInfo | undefined {
+  const provider = providerOf(spec);
+  const same = engines.filter((e) => e.id === provider);
+  return same.find((e) => !spec.providerConnectionId || e.connectionId === spec.providerConnectionId) ?? same[0];
+}
 
 /**
- * Which model the agent thinks with. Each run (and its rehearsals) uses it;
- * drafting uses it first. A model this workspace has no key for can still be
- * chosen, with a note, so a draft can be prepared before the key is added.
+ * Which provider and model the agent thinks with. Each run (and its rehearsals)
+ * uses them. The list holds the keys this workspace has under Connections;
+ * every OpenAI-compatible connection (Groq, Mistral, Ollama …) is its own entry.
  */
 function EnginePicker({ spec, set, engines }: { spec: AgentSpec; set: SetSpec; engines: EngineInfo[] }) {
-  const current = engineOfSpec(spec);
-  const has = (id: "anthropic" | "gemini") => engines.find((e) => e.id === id);
+  const provider = providerOf(spec);
+  const key = keyFor(spec, engines);
+  const optionValue = (e: { id: ProviderId; connectionId?: string }) => (e.id === "openai_compatible" ? `${e.id}:${e.connectionId}` : e.id);
+  const current = key ? optionValue(key) : provider;
+  const model = modelFor(spec, provider);
+  const suggestions = suggestedModels(provider, key?.preset).filter((m) => m !== model);
   return (
     <div className="ab-field">
-      <span className="ab-label">Runs on</span>
-      <div className="ab-engines">
-        {(["anthropic", "gemini"] as const).map((id) => {
-          const e = has(id);
-          return (
-            <button key={id} type="button" className={`ab-format ${current === id ? "on" : ""}`} onClick={() => set({ engine: id, model: undefined })}>
-              <b>{ENGINE_NAMES[id]}</b>
-              <span>{e ? e.model : "No key in this workspace"}</span>
-            </button>
-          );
-        })}
-      </div>
+      <span className="ab-label">Model</span>
       <label className="ab-model">
-        <span>Model</span>
-        <select className="input" value={spec.model ?? ""} onChange={(e) => set({ model: e.target.value || undefined })}>
-          <option value="">Workspace default{has(current) ? ` (${has(current)!.model})` : ""}</option>
-          {ENGINE_MODEL_CHOICES[current].map((m) => (
-            <option key={m.id} value={m.id}>{m.id} — {m.note}</option>
+        <span>Provider</span>
+        <select
+          className="input"
+          value={current}
+          onChange={(e) => {
+            const [p, conn] = e.target.value.split(":");
+            set({ provider: p as ProviderId, providerConnectionId: conn || undefined, model: undefined });
+          }}
+        >
+          {engines.map((e) => (
+            <option key={e.connectionId ?? e.id} value={optionValue(e)}>
+              {e.label}
+            </option>
           ))}
+          {!key && <option value={current}>{PROVIDERS[provider].label} — no key in this workspace</option>}
         </select>
       </label>
-      {!has(current) ? (
+      <label className="ab-model">
+        <span>{provider === "azure_openai" ? "Deployment" : "Model"}</span>
+        {provider === "gemini" ? (
+          <select className="input" value={model} onChange={(e) => set({ model: e.target.value || undefined })}>
+            <option value="">Workspace default{key ? ` (${key.model})` : ""}</option>
+            {PROVIDERS.gemini.models.map((m) => (
+              <option key={m.id} value={m.id}>{m.id} — {m.note}</option>
+            ))}
+          </select>
+        ) : provider === "azure_openai" ? (
+          <input className="input" value={key?.model || "set on the connection"} disabled />
+        ) : (
+          <>
+            <input
+              className="input mono"
+              list="ab-model-suggestions"
+              value={model}
+              placeholder={key?.model ? `Default: ${key.model}` : "A model id this provider serves"}
+              onChange={(e) => set({ model: e.target.value.trim() || undefined })}
+            />
+            <datalist id="ab-model-suggestions">
+              {suggestions.map((m) => (
+                <option key={m} value={m}>
+                  {PROVIDERS[provider].models.find((x) => x.id === m)?.note ?? ""}
+                </option>
+              ))}
+            </datalist>
+          </>
+        )}
+      </label>
+      {!key ? (
         <span className="ab-field-note warn">
-          <AlertIcon size={12} /> This workspace has no {current === "gemini" ? "Gemini" : "Anthropic"} key, so the agent can&apos;t run yet. An admin can add one under{" "}
-          <a href="/connections" target="_blank" rel="noreferrer">Connections ↗</a>.
+          <AlertIcon size={12} /> This workspace has no {PROVIDERS[provider].label} key, so the agent can&apos;t run yet. An admin can add one under{" "}
+          <a href="/connections" target="_blank" rel="noreferrer">Connections ↗</a>, or choose another provider.
         </span>
       ) : (
-        <span className="ab-field-note">Every run and rehearsal uses this model. Drafting below tries it first.</span>
+        <span className="ab-field-note">
+          Every run and rehearsal uses this model.
+          {!PROVIDERS[provider].webSearch && " Web search, if the agent uses it, runs on another key the workspace has (Gemini, Anthropic or OpenAI)."}
+        </span>
       )}
     </div>
   );
@@ -1595,7 +1631,7 @@ function Brief({
       const res = await fetch("/api/compile", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ brief: spec.brief, engine: engineOfSpec(spec) }),
+        body: JSON.stringify({ brief: spec.brief }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -3772,7 +3808,7 @@ function Review({
         </>
       ) : none,
     },
-    { k: "Model", icon: <SparkIcon size={15} />, step: 0, v: `${ENGINE_NAMES[engineOfSpec(spec)]}${spec.model ? ` · ${spec.model}` : ""}` },
+    { k: "Model", icon: <SparkIcon size={15} />, step: 0, v: `${PROVIDERS[providerOf(spec)].label} · ${modelFor(spec, providerOf(spec)) || "default model"}` },
     { k: "Deliverable", icon: <DocIcon size={15} />, step: 1, v: spec.output.format || <span className="dim">Not set</span> },
     { k: "Skills", icon: <BookIcon size={15} />, step: 1, v: skillNames.length ? skillNames.join(" · ") : none },
     {

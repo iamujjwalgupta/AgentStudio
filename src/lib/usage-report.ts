@@ -1,6 +1,7 @@
+import { PROVIDER_IDS } from "./providers";
 import { one, q } from "./db";
 import { rateFor } from "./pricing";
-import { FEATURE_LABEL, limitsFor, periodStarts, shareOf, usedSince, type Feature, type LimitRow, type Provider } from "./metering";
+import { FEATURE_LABEL, PROVIDER_LABEL, limitsFor, periodStarts, shareOf, usedSince, type Feature, type LimitRow, type Provider } from "./metering";
 
 /**
  * What the Usage & limits page shows, from usage_events: this month's totals per
@@ -60,7 +61,12 @@ export async function usageOverview(orgId: string, days = 30): Promise<UsageOver
 
   const [keys, perProvider, perModelMonth, today, daily, byAgent, byFeature, byUser, byModel, heaviest, alerts, agents, limits] =
     await Promise.all([
-      q<any>(`select kind from connections where org_id = $1 and kind in ('anthropic', 'gemini') and secret_enc is not null`, [orgId]),
+      q<any>(
+        `select distinct kind from connections
+          where org_id = $1 and kind in ('gemini', 'anthropic', 'openai', 'azure_openai', 'openai_compatible')
+            and (secret_enc is not null or kind = 'openai_compatible')`,
+        [orgId],
+      ),
       q<any>(
         `select provider, count(*)::int as calls, count(distinct run_id)::int as runs,
                 coalesce(sum(input_tokens), 0)::float8 as input, coalesce(sum(output_tokens), 0)::float8 as output,
@@ -86,7 +92,7 @@ export async function usageOverview(orgId: string, days = 30): Promise<UsageOver
          select to_char(d.day, 'YYYY-MM-DD') as day, p.provider,
                 coalesce(sum(e.input_tokens), 0)::float8 as input, coalesce(sum(e.output_tokens), 0)::float8 as output,
                 coalesce(sum(e.cache_read_tokens + e.cache_write_tokens), 0)::float8 as cache, coalesce(sum(e.cost_usd), 0)::float8 as usd
-           from d cross join (values ('anthropic'), ('gemini')) as p(provider)
+           from d cross join (values ('gemini'), ('anthropic'), ('openai'), ('azure_openai'), ('openai_compatible')) as p(provider)
            left join usage_events e
              on e.org_id = $1 and e.provider = p.provider
             and date_trunc('day', e.at at time zone (select tz from tz)) = d.day
@@ -141,7 +147,12 @@ export async function usageOverview(orgId: string, days = 30): Promise<UsageOver
     ]);
 
   const configured = new Set(keys.map((k) => k.kind));
-  const providers: ProviderSummary[] = (["anthropic", "gemini"] as Provider[]).map((p) => {
+  // A card per key the workspace has, and per provider with usage this month
+  // (a key removed since). Gemini, the default, always.
+  const shownProviders: Provider[] = PROVIDER_IDS.filter(
+    (p) => p === "gemini" || keys.some((k: any) => k.kind === p) || perProvider.some((x) => x.provider === p && (x.calls ?? 0) > 0),
+  );
+  const providers: ProviderSummary[] = shownProviders.map((p) => {
     const r = perProvider.find((x) => x.provider === p) ?? {};
     const t = today.find((x) => x.provider === p) ?? {};
     const savings = perModelMonth
@@ -151,7 +162,7 @@ export async function usageOverview(orgId: string, days = 30): Promise<UsageOver
     const usd = r.usd ?? 0;
     return {
       provider: p,
-      configured: configured.has(p) || (p === "anthropic" && !!process.env.ANTHROPIC_API_KEY) || (p === "gemini" && !!process.env.GEMINI_API_KEY),
+      configured: configured.has(p) || (p === "gemini" && !!process.env.GEMINI_API_KEY),
       calls: r.calls ?? 0,
       runs: r.runs ?? 0,
       input: r.input ?? 0,
@@ -172,7 +183,7 @@ export async function usageOverview(orgId: string, days = 30): Promise<UsageOver
   for (const l of limits) {
     const since = l.period === "day" ? starts.day : starts.month;
     const used = await usedSince(orgId, l, since);
-    let name = l.target === "gemini" ? "Google Gemini key" : "Anthropic key";
+    let name = `${PROVIDER_LABEL[l.target as Provider] ?? l.target} key`;
     if (l.scope === "agent") {
       name = names.get(l.target) ?? (await one<any>(`select name from agents where id = $1`, [l.target]))?.name ?? "Deleted agent";
     }

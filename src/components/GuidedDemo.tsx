@@ -74,7 +74,7 @@ const STEPS: TourStep[] = [
     actionLabel: "Open Connections",
     title: "Connections",
     description:
-      "The systems agents can reach — databases, APIs, email, Slack, Teams, Jira, GitHub, S3 — and your Anthropic and Gemini keys. Secrets are stored encrypted.",
+      "The systems agents can reach — databases, APIs, email, Slack, Teams, Jira, GitHub, S3 — and your Gemini key, which every agent runs on. Secrets are stored encrypted.",
     highlights: [
       "Test a connection before an agent depends on it",
       "See which agents use each connection, and what needs fixing",
@@ -149,7 +149,7 @@ const STEPS: TourStep[] = [
     actionLabel: "Open Usage & limits",
     title: "Usage & limits",
     description:
-      "Every model call on the Anthropic and Gemini keys is counted. Set limits in tokens or dollars, per month or per day, on a key or on one agent.",
+      "Every model call on the Gemini key is counted. Set limits in tokens or dollars, per month or per day, on a key or on one agent.",
     highlights: [
       "Tokens and cost by key, agent, feature, person and model",
       "At a limit, new model calls stop; owner and admins are told at 80% and 100%",

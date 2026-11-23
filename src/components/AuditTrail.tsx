@@ -22,11 +22,11 @@ const CATEGORIES: { key: string; label: string }[] = [
 ];
 const CATEGORY_OF: Record<string, string> = {
   agent: "agents", run: "runs", cfo_run: "runs", skill: "skills", connection: "connections",
-  user: "access", org: "workspace", usage_limit: "workspace", document: "workspace", app: "apps",
+  user: "access", api_key: "access", org: "workspace", usage_limit: "workspace", document: "workspace", app: "apps",
 };
 const ENTITY_LABEL: Record<string, string> = {
   agent: "Agent", run: "Run", cfo_run: "CFO run", skill: "Skill", connection: "Connection", user: "Member",
-  org: "Workspace", usage_limit: "Usage limit", document: "Document", app: "App",
+  org: "Workspace", usage_limit: "Usage limit", document: "Document", app: "App", api_key: "API key",
 };
 const PERIODS = [
   { v: 1, label: "Last 24 hours" },

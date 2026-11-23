@@ -14,7 +14,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # Next needs to compile; no secrets are required at build time.
-RUN npm run build
+# The source fingerprint goes into the image first, so the running app can say
+# which code it is (compare with `node scripts/fingerprint.mjs` on a copy).
+RUN node scripts/fingerprint.mjs --write .build-info.json && npm run build
 
 FROM node:22-alpine AS run
 WORKDIR /app
@@ -36,6 +38,7 @@ COPY --from=build --chown=app:app /app/package.json ./package.json
 COPY --from=build --chown=app:app /app/next.config.mjs ./next.config.mjs
 COPY --from=build --chown=app:app /app/db ./db
 COPY --from=build --chown=app:app /app/scripts ./scripts
+COPY --from=build --chown=app:app /app/.build-info.json ./.build-info.json
 
 USER app
 EXPOSE 3000

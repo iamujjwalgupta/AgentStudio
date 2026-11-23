@@ -39,8 +39,18 @@ const NO_RUNS = { completed: 0, failed: 0, awaiting: 0, running: 0, costUsd: 0, 
  * unsaved: the agent is only written when the person saves it as a draft or
  * publishes it, and leaving asks whether to keep it.
  */
-export default function NewAgentStart({ templates, ctx }: { templates: Template[]; ctx: BuilderContext }) {
+export default function NewAgentStart({
+  templates,
+  ctx,
+  defaultKey,
+}: {
+  templates: Template[];
+  ctx: BuilderContext;
+  /** The workspace AI key, which a new agent starts on until someone picks another. */
+  defaultKey?: Pick<AgentSpec, "provider" | "providerConnectionId"> | null;
+}) {
   const router = useRouter();
+  const startSpec = (): AgentSpec => ({ ...emptySpec(), ...(defaultKey ?? {}) });
   const [brief, setBrief] = useState("");
   const [busy, setBusy] = useState<"" | "draft">("");
   const [phase, setPhase] = useState("");
@@ -74,7 +84,7 @@ export default function NewAgentStart({ templates, ctx }: { templates: Template[
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "The brief could not be drafted.");
-      setStarted({ spec: { ...emptySpec(), ...data.spec, brief }, step: 1 });
+      setStarted({ spec: { ...startSpec(), ...data.spec, brief }, step: 1 });
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -91,7 +101,8 @@ export default function NewAgentStart({ templates, ctx }: { templates: Template[
       const res = await fetch("/api/agents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spec: { ...emptySpec(), brief } }),
+        // Named from the brief, so the draft is recognisable in the list rather than one more "Untitled agent".
+        body: JSON.stringify({ spec: { ...startSpec(), brief, name: draftName(brief), purpose: brief.trim().replace(/\s+/g, " ").slice(0, 280) } }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || "The agent could not be saved.");
@@ -159,7 +170,7 @@ export default function NewAgentStart({ templates, ctx }: { templates: Template[
               </button>
               {busy === "draft" && <span className="ab-phase">{phase}</span>}
             </div>
-            <button className="btn btn-ghost" onClick={() => setStarted({ spec: { ...emptySpec(), brief }, step: 0 })} disabled={!!busy}>
+            <button className="btn btn-ghost" onClick={() => setStarted({ spec: { ...startSpec(), brief }, step: 0 })} disabled={!!busy}>
               Start blank and build it step by step
             </button>
           </div>
@@ -216,4 +227,12 @@ export default function NewAgentStart({ templates, ctx }: { templates: Template[
       )}
     </div>
   );
+}
+
+/** A short name for a draft saved before it was drafted: the brief's first words. */
+function draftName(brief: string): string {
+  const first = brief.trim().replace(/\s+/g, " ").split(/(?<=[.!?])\s/)[0];
+  const words = first.split(" ").slice(0, 7).join(" ").replace(/[.,;:!?]+$/, "");
+  const name = words.length < first.length ? `${words}…` : words;
+  return name ? `Draft: ${name.charAt(0).toUpperCase()}${name.slice(1)}` : "Untitled agent";
 }

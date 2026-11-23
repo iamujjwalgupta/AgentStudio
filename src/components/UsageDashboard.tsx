@@ -1,5 +1,6 @@
 "use client";
 
+import { PROVIDERS, PROVIDER_IDS, type ProviderId } from "@/lib/providers";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { KindIcon } from "@/components/ConnectorIcons";
@@ -7,9 +8,9 @@ import { AlertIcon, CheckIcon, CrossIcon, PencilIcon, TrashIcon } from "@/compon
 import type { LimitStatus, UsageOverview } from "@/lib/usage-report";
 
 type Data = UsageOverview & { canManage: boolean; timezone: string };
-type Provider = "anthropic" | "gemini";
+type Provider = ProviderId;
 
-const PROVIDER_NAME: Record<Provider, string> = { anthropic: "Anthropic (Claude)", gemini: "Google Gemini" };
+const PROVIDER_NAME: Record<Provider, string> = Object.fromEntries(PROVIDER_IDS.map((p) => [p, PROVIDERS[p].label])) as Record<Provider, string>;
 
 export const fmtTokens = (n: number) => {
   const v = Math.round(Number(n) || 0);
@@ -38,7 +39,7 @@ export default function UsageDashboard() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState("");
   const [days, setDays] = useState(30);
-  const [series, setSeries] = useState<Provider>("anthropic");
+  const [series, setSeries] = useState<Provider>("gemini");
   const [tab, setTab] = useState<"agent" | "feature" | "user" | "model">("agent");
   const [editing, setEditing] = useState<Partial<LimitStatus> | null>(null);
 
@@ -73,7 +74,7 @@ export default function UsageDashboard() {
           <div className="eyebrow">Workspace</div>
           <h1>Usage &amp; limits</h1>
           <p className="sub" style={{ maxWidth: "none" }}>
-            Every model call the workspace makes, on the Anthropic and Gemini keys, and the limits that stop it.
+            Every model call the workspace makes on its Gemini key, and the limits that stop it.
             This month runs from {fmtDate(data.monthStart, tz)} to {fmtDate(new Date(new Date(data.nextMonth).getTime() - 1).toISOString(), tz)}.
           </p>
         </div>
@@ -96,7 +97,7 @@ export default function UsageDashboard() {
                 <span className="ux-ic"><KindIcon kind={p.provider} size={26} /></span>
                 <div className="grow">
                   <b>{PROVIDER_NAME[p.provider]}</b>
-                  <span>{p.configured ? (p.provider === "anthropic" ? "Runs every agent" : "Runs the Google ADK sandbox") : "No key added"}</span>
+                  <span>{!p.configured ? (p.calls ? "Key removed — past usage only" : "No key added") : p.provider === "gemini" ? "The default for agents, web search and tests" : "Runs the agents set to it"}</span>
                 </div>
                 <span className={`ux-pill ${!p.configured ? "muted" : level(worst)}`}>
                   {!p.configured ? "Not set up" : worst >= 1 ? "Limit reached" : worst >= 0.8 ? "Near the limit" : keyLimits.length ? "Within limits" : "No limit set"}
@@ -134,7 +135,7 @@ export default function UsageDashboard() {
                 </span>
                 {p.cacheSavingsUsd > 0 && <span>Caching saved {fmtUsd(p.cacheSavingsUsd)}</span>}
               </div>
-              {data.canManage && (
+              {data.canManage && (p.configured || p.provider === "gemini") && (
                 <div className="ux-key-actions">
                   {!p.configured ? (
                     <Link className="btn btn-sm" href={`/connections?add=${p.provider}`}>Add the key</Link>
@@ -174,8 +175,8 @@ export default function UsageDashboard() {
           </div>
           <div className="ux-card-tools">
             <span className="seg">
-              {(["anthropic", "gemini"] as Provider[]).map((p) => (
-                <button key={p} className={`seg-opt ${series === p ? "on" : ""}`} onClick={() => setSeries(p)}>{p === "anthropic" ? "Anthropic" : "Gemini"}</button>
+              {data.providers.map((x) => x.provider).map((p) => (
+                <button key={p} className={`seg-opt ${series === p ? "on" : ""}`} onClick={() => setSeries(p)}>{PROVIDER_NAME[p]}</button>
               ))}
             </span>
             <select className="select-sm" value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Range">
@@ -422,7 +423,7 @@ function LimitDialog({
   onSaved: () => void;
 }) {
   const [scope] = useState(initial.scope ?? "provider");
-  const [target, setTarget] = useState(initial.target ?? "anthropic");
+  const [target, setTarget] = useState(initial.target ?? "gemini");
   const [period, setPeriod] = useState(initial.period ?? "month");
   const [tokens, setTokens] = useState(initial.max_tokens ? String(initial.max_tokens) : "");
   const [usd, setUsd] = useState(initial.max_usd ? String(initial.max_usd) : "");

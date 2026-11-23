@@ -21,7 +21,7 @@ Domain-agnostic — nothing in the model, the tools, or the copy assumes finance
 
 | Tool | Risk | Needs | What it actually does |
 |---|---|---|---|
-| Search the web | low | — | Executed server-side by the Anthropic API |
+| Search the web | low | — | Google Search through Gemini, on the workspace's Gemini key |
 | Fetch a web page | low | — | Retrieves a URL, extracts readable text |
 | Query a database | low | Postgres connection | Read-only SQL; write statements blocked unless the connection allows them |
 | Read an uploaded document | low | — | CSV, XLSX, PDF, DOCX, TXT parsing |
@@ -37,7 +37,7 @@ Risk drives the default gate. Low risk runs automatically; medium and high canno
 Requires Node 20+ and Postgres 14+.
 
 ```bash
-cp .env.example .env      # fill in DATABASE_URL, ANTHROPIC_API_KEY, AUTH_SECRET
+cp .env.example .env      # fill in DATABASE_URL, AUTH_SECRET
 npm install
 npm run db:setup          # applies db/schema.sql, safe to re-run
 npm run dev               # http://localhost:3000
@@ -45,7 +45,7 @@ npm run dev               # http://localhost:3000
 
 Open the app, choose **Create a workspace**, and you're in. Add connections under Connections; they are encrypted at rest with `AUTH_SECRET` and never returned to the browser.
 
-`ANTHROPIC_API_KEY` is required for the two model-backed paths: compiling a brief into a spec, and running an agent. Everything else works without it.
+Agents run on **Google Gemini**: add the Gemini key in the app under **Connections** (or set `GEMINI_API_KEY` as a fallback). It is needed for drafting an agent from a brief and for running one. Everything else works without it.
 
 ## Architecture
 
@@ -63,7 +63,7 @@ Browser ─── Next.js App Router (server components + route handlers)
                 │                 persists message history to runs.state so a run
                 │                 can sit at an approval gate indefinitely and resume
                 ├── lib/tools.ts   the eight executors above
-                ├── lib/ai.ts      Anthropic client, deterministic system-prompt builder
+                ├── lib/ai.ts      deterministic system-prompt builder, drafting (lib/models.ts: Gemini)
                 └── Postgres       orgs · users · connections · agents · agent_versions
                                    runs · run_steps · approvals · audit_events · documents
 ```
@@ -83,7 +83,7 @@ Run live against Postgres 16 on 29 Aug:
 - Audit events written for workspace creation, sign-in, agent creation, connection creation
 - After the design merge: `/agents`, `/connections`, `/approvals`, `/runs`, `/audit` all render 200, and the compiled stylesheet carries the palette, grid, mono face and sweep animation
 
-Not exercised here, because they need your API key: the brief compiler and a full agent run with an approval gate. Both are wired and typecheck; run them first with `ANTHROPIC_API_KEY` set.
+Not exercised here, because they need your API key: the brief compiler and a full agent run with an approval gate. Both are wired and typecheck; run them first with a Gemini key added under Connections.
 
 ## The interface
 

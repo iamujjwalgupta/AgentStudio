@@ -11,13 +11,17 @@
  * they read from the encrypted secret.
  */
 
+import { COMPATIBLE_PRESETS, PROVIDERS, PROVIDER_IDS } from "./providers";
+
 export type FieldDef = {
   key: string;
   label: string;
   hint: string;
   /** Optional fields may be left empty. */
   optional?: boolean;
-  kind?: "text" | "number" | "checkbox";
+  kind?: "text" | "number" | "checkbox" | "select";
+  /** For a select: the choices, each of which may fill other fields when picked. */
+  options?: { value: string; label: string; fill?: Record<string, string> }[];
 };
 
 export type ConnectionType = {
@@ -35,7 +39,7 @@ export const CONNECTION_GROUPS: { id: ConnectionType["group"]; title: string; no
   { id: "data", title: "Data", note: "Databases, services and files agents read from or write to" },
   { id: "messaging", title: "Messaging", note: "Where agents send emails and posts" },
   { id: "work", title: "Work tracking and code", note: "Tickets and repositories" },
-  { id: "model", title: "AI model keys", note: "What runs the agents and the sandbox" },
+  { id: "model", title: "AI model keys", note: "What agents think with. Gemini is the default; each agent can be set to another provider" },
 ];
 
 export const CONNECTION_TYPES: ConnectionType[] = [
@@ -148,28 +152,72 @@ export const CONNECTION_TYPES: ConnectionType[] = [
     test: "Test connection",
   },
   {
-    kind: "anthropic",
-    label: "Anthropic (Claude)",
-    group: "model",
-    description: "The model key every agent run uses. Required: agents cannot run without it.",
-    fields: [{ key: "model", label: "Model", hint: "claude-sonnet-4-6 (the default)", optional: true }],
-    secret: { label: "API key", hint: "sk-ant-…" },
-    test: "Test the key",
-  },
-  {
     kind: "gemini",
     label: "Google Gemini",
     group: "model",
-    description: "The model key the Google ADK sandbox uses.",
-    fields: [{ key: "model", label: "Model", hint: "gemini-2.5-flash", optional: true }],
+    description: "The default model key: agents run on it unless set to another provider, and it powers web search and sandbox tests.",
+    fields: [{ key: "model", label: "Default model", hint: "gemini-2.5-flash (agents can choose their own)", optional: true }],
     secret: { label: "API key", hint: "From Google AI Studio" },
+    test: "Test the key",
+  },
+  {
+    kind: "anthropic",
+    label: "Anthropic (Claude)",
+    group: "model",
+    description: "Claude models. Agents set to Anthropic run on this key; it also has its own web search.",
+    fields: [{ key: "model", label: "Default model", hint: "claude-sonnet-5-5 (agents can choose their own)", optional: true }],
+    secret: { label: "API key", hint: "sk-ant-… from console.anthropic.com" },
+    test: "Test the key",
+  },
+  {
+    kind: "openai",
+    label: "OpenAI",
+    group: "model",
+    description: "GPT models. Agents set to OpenAI run on this key; it also has its own web search.",
+    fields: [{ key: "model", label: "Default model", hint: "gpt-4.1 (agents can choose their own)", optional: true }],
+    secret: { label: "API key", hint: "sk-… from platform.openai.com" },
+    test: "Test the key",
+  },
+  {
+    kind: "azure_openai",
+    label: "Azure OpenAI",
+    group: "model",
+    description: "An OpenAI model deployed in your Azure subscription. Agents set to Azure OpenAI run on this deployment.",
+    fields: [
+      { key: "endpoint", label: "Endpoint", hint: "https://your-resource.openai.azure.com" },
+      { key: "deployment", label: "Deployment name", hint: "gpt-4o-finance" },
+      { key: "apiVersion", label: "API version", hint: "2024-10-21", optional: true },
+    ],
+    secret: { label: "API key", hint: "Key 1 or Key 2 from the resource’s Keys and Endpoint page" },
+    test: "Test the deployment",
+  },
+  {
+    kind: "openai_compatible",
+    label: "Other AI provider (OpenAI-compatible)",
+    group: "model",
+    description: "Mistral, Groq, DeepSeek, xAI, OpenRouter, Together, a self-hosted Ollama — any service that speaks the OpenAI API. Add one per service.",
+    fields: [
+      {
+        key: "preset",
+        label: "Service",
+        hint: "",
+        kind: "select",
+        optional: true,
+        options: COMPATIBLE_PRESETS.map((p) => ({ value: p.id, label: p.label, fill: { baseUrl: p.baseUrl, model: p.models[0] ?? "" } })),
+      },
+      { key: "baseUrl", label: "API address", hint: "https://api.example.com/v1" },
+      { key: "model", label: "Default model", hint: "The model id the service serves" },
+    ],
+    secret: { label: "API key", hint: "Leave empty for a self-hosted service with no key", optional: true },
     test: "Test the key",
   },
 ];
 
 export const USABLE_KINDS = new Set(CONNECTION_TYPES.map((t) => t.kind));
 /** Only one of these per workspace: the platform reads the first it finds. */
-export const SINGLE_KINDS = new Set(["anthropic", "gemini"]);
+export const SINGLE_KINDS = new Set<string>(PROVIDER_IDS.filter((p) => PROVIDERS[p].single));
+/** The connection kinds that are AI model keys. */
+export const MODEL_KINDS = new Set<string>(PROVIDER_IDS);
 
 export const typeOf = (kind: string) => CONNECTION_TYPES.find((t) => t.kind === kind);
 export const kindLabel = (kind: string) => typeOf(kind)?.label ?? kind;

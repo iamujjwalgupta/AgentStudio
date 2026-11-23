@@ -10,6 +10,7 @@ import InviteBanner from "@/components/InviteBanner";
 import GuidedDemo, { TourLauncher } from "@/components/GuidedDemo";
 import RailToggle from "@/components/RailToggle";
 import SidebarNav from "@/components/SidebarNav";
+import { buildInfo } from "@/lib/build-info";
 
 export const dynamic = "force-dynamic";
 
@@ -62,7 +63,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             </Link>
             <RailToggle initialCollapsed={collapsed} />
           </div>
-          <WorkspaceSwitcher memberships={user.memberships} activeOrgId={user.orgId} />
+          <WorkspaceSwitcher memberships={user.memberships} activeOrgId={user.orgId} canCreate={user.isOwner || user.role === "admin"} />
         </div>
 
         <SidebarNav approvals={pending} shares={shares} running={running} showMembers={user.canManageMembers} />
@@ -79,6 +80,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <TourLauncher />
             <SignOut />
           </div>
+          {(() => {
+            const b = buildInfo();
+            return (
+              <div
+                className="rl-build"
+                title={
+                  b
+                    ? `The code this server runs: fingerprint ${b.fingerprint} of ${b.files} source files, built ${new Date(b.builtAt).toLocaleString("en-GB")}. Compare with: node scripts/fingerprint.mjs`
+                    : "Running from a working copy, not a built image. Its fingerprint: node scripts/fingerprint.mjs"
+                }
+              >
+                {b ? `Build ${b.fingerprint}` : "Local build"}
+              </div>
+            );
+          })()}
         </div>
       </aside>
       <main className="main">

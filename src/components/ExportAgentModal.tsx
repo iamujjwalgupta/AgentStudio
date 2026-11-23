@@ -197,7 +197,7 @@ function PackageTab({
         ) : (
           <>
             <p className="ex-lead">
-              The agent on its own: its instructions, skills and actions, with a small service that runs it on your Anthropic
+              The agent on its own: its instructions, skills and actions, with a small service that runs it on your Google Gemini
               key. Callers need the access token that comes filled in with the package.
             </p>
 

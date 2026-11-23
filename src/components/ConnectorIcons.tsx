@@ -200,6 +200,36 @@ export function ConnectorIcon({ id, size = 32, className = "" }: { id: string; s
         </svg>
       );
 
+    case "openai":
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" className={className}>
+          <rect width="24" height="24" rx="4" fill="#0f0f0f" />
+          <g fill="none" stroke="#ffffff" strokeWidth="1.6" strokeLinejoin="round">
+            <path d="M12 5l6 3.5v7L12 19l-6-3.5v-7z" />
+            <path d="M12 5v7l6 3.5M12 12l-6 3.5" />
+          </g>
+        </svg>
+      );
+
+    case "azure_openai":
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" className={className}>
+          <rect width="24" height="24" rx="4" fill="#0078d4" />
+          <path d="M10.6 5h3.1l-5 13.8H5.4L10.6 5zm3.9 4.6l4.1 9.2h-7.6l4.6-1.5-2.3-3.9 1.2-3.8z" fill="#ffffff" />
+        </svg>
+      );
+
+    case "openai_compatible":
+      return (
+        <svg width={size} height={size} viewBox="0 0 24 24" className={className}>
+          <rect width="24" height="24" rx="4" fill="#475569" />
+          <g fill="none" stroke="#ffffff" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 7.5L5 12l4 4.5M15 7.5l4 4.5-4 4.5" />
+            <circle cx="12" cy="12" r="1.3" fill="#ffffff" stroke="none" />
+          </g>
+        </svg>
+      );
+
     case "redis":
       return (
         <svg width={size} height={size} viewBox="0 0 24 24" className={className}>

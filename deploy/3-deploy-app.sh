@@ -12,7 +12,10 @@ cd "${ROOT_DIR}"
 case "${ACCESS_MODE}" in
   iap)    [ -n "${IAP_MEMBERS}" ] || die "ACCESS_MODE=iap needs IAP_MEMBERS in deploy/config.sh (e.g. domain:yourcompany.com)." ;;
   public) ;;
-  *)      die "ACCESS_MODE must be 'iap' or 'public', not '${ACCESS_MODE}'." ;;
+  # keep: an existing service whose access (IAP, who may open it) is already set up,
+  # perhaps by an admin. The deploy changes the code only and leaves access alone.
+  keep)   ;;
+  *)      die "ACCESS_MODE must be 'iap', 'public' or 'keep', not '${ACCESS_MODE}'." ;;
 esac
 
 CONN="$(sql_connection_name)" || die "Cloud SQL instance not found. Run deploy/1-setup-infra.sh first."
@@ -45,13 +48,15 @@ if [ "${SECRETS_MODE}" = "env" ]; then
   write_env_yaml "${TMP_DIR}/job.yaml" "DATABASE_URL=${DATABASE_URL}"
   write_env_yaml "${TMP_DIR}/service.yaml" \
     "DATABASE_URL=${DATABASE_URL}" "AUTH_SECRET=${AUTH_SECRET}" "CRON_SECRET=${CRON_SECRET}" \
-    "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" "STORAGE_DIR=/data/storage" "APP_URL=${APP_URL}"
+    "STORAGE_DIR=/data/storage" "APP_URL=${APP_URL}"
+  [ "${SERVICE_EXISTS}" = "1" ] && keep_live_env "${TMP_DIR}/service.yaml" \
+    DATABASE_URL AUTH_SECRET CRON_SECRET STORAGE_DIR APP_URL "${RETIRED_SETTINGS[@]}"
   JOB_VALUE_ARGS=(--env-vars-file="${TMP_DIR}/job.yaml")
   SERVICE_VALUE_ARGS=(--env-vars-file="${TMP_DIR}/service.yaml")
 else
   JOB_VALUE_ARGS=(--set-secrets=DATABASE_URL=DATABASE_URL:latest)
   SERVICE_VALUE_ARGS=(
-    --set-secrets=DATABASE_URL=DATABASE_URL:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,AUTH_SECRET=AUTH_SECRET:latest,CRON_SECRET=CRON_SECRET:latest
+    --set-secrets=DATABASE_URL=DATABASE_URL:latest,AUTH_SECRET=AUTH_SECRET:latest,CRON_SECRET=CRON_SECRET:latest
     --set-env-vars="STORAGE_DIR=/data/storage,APP_URL=${APP_URL}"
   )
 fi
@@ -118,7 +123,7 @@ if [ "${SERVICE_EXISTS}" = "0" ]; then
 fi
 if [ "${ACCESS_MODE}" = "public" ]; then
   DEPLOY_ARGS+=(--allow-unauthenticated)
-else
+elif [ "${ACCESS_MODE}" = "iap" ] || [ "${SERVICE_EXISTS}" = "0" ]; then
   DEPLOY_ARGS+=(--no-allow-unauthenticated)
 fi
 gcloud run deploy "${SERVICE}" "${DEPLOY_ARGS[@]}"
@@ -148,8 +153,10 @@ if [ "${ACCESS_MODE}" = "iap" ]; then
     info "If turning on IAP itself fails even for an admin, see 'IAP could not be enabled' in deploy/README.md."
     exit 1
   fi
-else
+elif [ "${ACCESS_MODE}" = "public" ]; then
   warn "ACCESS_MODE=public: anyone on the internet can reach this app. See 'Security' in deploy/README.md."
+else
+  info "ACCESS_MODE=keep: access to the app (IAP and who may open it) was left as it was."
 fi
 
 step "Checking the app"

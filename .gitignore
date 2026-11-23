@@ -16,3 +16,9 @@ deploy/admin-grants*
 
 # Mac Finder files
 .DS_Store
+
+# DuckDB spill files
+.tmp/
+
+# Written into the image by the Docker build (scripts/fingerprint.mjs)
+.build-info.json

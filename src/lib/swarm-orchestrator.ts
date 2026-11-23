@@ -227,7 +227,7 @@ export async function executeSwarmRun(opts: SwarmExecutionOptions): Promise<void
   }
 
   // The supervisor runs on the agent's own engine, like a single agent does.
-  const access = await engineAccess(run.org_id, engineOf(spec), spec.model);
+  const access = await engineAccess(run.org_id, engineOf(spec), spec.model, spec.providerConnectionId);
   const model = access.model;
 
   const agentRow = await one<any>(`select name from agents where id = $1`, [run.agent_id]);

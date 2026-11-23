@@ -1,3 +1,5 @@
+import type { ProviderId } from "./providers";
+
 export type Archetype = "analyst" | "author" | "operator" | "sentinel";
 export type Gate = "auto" | "approval";
 export type Risk = "low" | "medium" | "high";
@@ -120,11 +122,14 @@ export type AgentSpec = {
   steps: string[];
   tools: SpecTool[];
   /**
-   * The model the agent runs on: Claude through Anthropic, or Gemini through
-   * Google. Unset means Claude, which is what every agent ran on before the
-   * choice existed. The workspace needs a key for whichever it is.
+   * The AI provider the agent runs on (lib/providers): Gemini when unset. The
+   * workspace needs that provider's key under Connections.
    */
-  engine?: "anthropic" | "gemini";
+  provider?: ProviderId;
+  /** Which OpenAI-compatible connection, when the workspace has several (Groq, Mistral …). */
+  providerConnectionId?: string;
+  /** Ignored: from before providers were offered (lib/models engineOf reads `provider`). */
+  engine?: string;
   /**
    * A model for this agent only, e.g. "gemini-2.5-pro" for a heavy agent while
    * the workspace default stays cheaper. Unset uses the model on the engine's

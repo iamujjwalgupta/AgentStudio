@@ -207,7 +207,9 @@
 .lg-sub { margin: 6px 0 22px; font-size: 14px; line-height: 1.5; color: var(--muted); }
 
 .lg-extra { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .45s cubic-bezier(.2,.8,.2,1), opacity .3s; }
-.lg-extra > div { overflow: hidden; min-height: 0; }
+/* clip, not hidden, so the focused field's 4px halo isn't cut at the sides */
+.lg-extra > div { overflow: clip; overflow-clip-margin: 6px; min-height: 0; }
+.lg-extra:not(.open) { pointer-events: none; }
 .lg-extra.open { grid-template-rows: 1fr; opacity: 1; }
 
 /* floating-label fields */
@@ -223,6 +225,8 @@
   width: 100%; border: 0; outline: 0; background: transparent; font: inherit; font-size: 15px; color: var(--text);
   padding: 22px 44px 8px 44px; border-radius: 12px;
 }
+/* the field's own border and ring show focus; beats the global [tabindex]:focus-visible outline */
+.lg-field input:focus-visible { outline: none; }
 .lg-field input:-webkit-autofill { -webkit-box-shadow: 0 0 0 40px #fff inset; -webkit-text-fill-color: var(--text); }
 .lg-ico { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #8aa0c4; display: grid; transition: color .2s; pointer-events: none; }
 .lg-field:has(.lg-hint) .lg-ico { top: 25px; }

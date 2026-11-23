@@ -1,3 +1,4 @@
+import { isProvider } from "@/lib/providers";
 import { NextResponse } from "next/server";
 import { one, q } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
@@ -19,8 +20,8 @@ export async function PUT(req: Request) {
   if (!SCOPES.includes(scope) || !PERIODS.includes(period) || !target) {
     return NextResponse.json({ error: "Choose what the limit is on and for which period." }, { status: 400 });
   }
-  if (scope === "provider" && !["anthropic", "gemini"].includes(target)) {
-    return NextResponse.json({ error: "Limits are on the Anthropic or the Gemini key." }, { status: 400 });
+  if (scope === "provider" && !isProvider(target)) {
+    return NextResponse.json({ error: "Limits are on a model key (Gemini, Anthropic, OpenAI …) or on one agent." }, { status: 400 });
   }
   if (scope === "agent" && !(await one<any>(`select 1 from agents where id::text = $1 and org_id = $2`, [target, u.orgId]))) {
     return NextResponse.json({ error: "That agent is not in this workspace." }, { status: 404 });

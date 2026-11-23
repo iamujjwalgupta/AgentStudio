@@ -94,6 +94,8 @@ export default function AgentList({
   const [email, setEmail] = useState("");
   const [note, setNote] = useState("");
   const [sent, setSent] = useState("");
+  // What the last delete did, shown above the list so the outcome is never in doubt.
+  const [deleted, setDeleted] = useState("");
   const [shareErr, setShareErr] = useState("");
 
   useEffect(() => {
@@ -288,6 +290,7 @@ export default function AgentList({
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || "The agent could not be deleted.");
+      setDeleted(`Deleted “${target.name}”, with its versions and runs.`);
       if (peekId === target.id) setPeekId(null);
       close();
       reload();
@@ -475,6 +478,12 @@ export default function AgentList({
       </div>
 
       {error && !target && <div className="error" style={{ marginBottom: 12 }}>{error}</div>}
+      {deleted && (
+        <div className="ok-note" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ flex: 1 }}>{deleted}</span>
+          <button className="btn btn-ghost" onClick={() => setDeleted("")} aria-label="Dismiss">Dismiss</button>
+        </div>
+      )}
 
       <div className="al-toolbar">
         <div className="al-toolbar-row">

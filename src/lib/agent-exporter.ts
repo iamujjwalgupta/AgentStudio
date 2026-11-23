@@ -1,6 +1,8 @@
+import { PROVIDERS, providerOf } from "./providers";
 import crypto from "crypto";
 import JSZip from "jszip";
 import { buildSystemPrompt, MODEL } from "./ai";
+import { ENGINE_MODELS } from "./models";
 import { SELECTABLE_TOOLS } from "./tools";
 import type { AgentSpec, Gate } from "./types";
 import type { SkillRow } from "./skills";
@@ -91,7 +93,7 @@ type Support = {
 const PG = { node: { pg: "^8.13.1" }, python: ["psycopg[binary]>=3.1"] };
 
 const SUPPORT: Record<string, Support> = {
-  web_search: { works: true, note: "Uses the same Anthropic key as the agent.", env: [] },
+  web_search: { works: true, note: "Google Search through Gemini, on the same key as the agent.", env: [] },
   fetch_url: { works: true, note: "", env: [] },
   sql_query: { works: true, note: "Read-only, against one PostgreSQL database.", env: ["DATABASE_URL"], ...PG },
   sql_execute: { works: true, note: "Against one PostgreSQL database.", env: ["DATABASE_URL"], ...PG },
@@ -185,9 +187,14 @@ function toolDefinitions(actions: ExportAction[], hasSkills: boolean) {
 
 // ---- settings ---------------------------------------------------------------------------
 
+/** The agent's own Gemini model when it has one, else the default. */
+function defaultModel(b: { spec: AgentSpec }): string {
+  return ENGINE_MODELS.gemini.includes(String(b.spec.model || "")) ? String(b.spec.model) : MODEL;
+}
+
 const ENV: Record<string, { description: string; hint: string; required: boolean }> = {
-  ANTHROPIC_API_KEY: { description: "Anthropic API key the agent runs on", hint: "sk-ant-...", required: true },
-  ANTHROPIC_MODEL: { description: "Model to use", hint: MODEL, required: false },
+  GEMINI_API_KEY: { description: "Google Gemini API key the agent runs on (from Google AI Studio)", hint: "AIza...", required: true },
+  GEMINI_MODEL: { description: "Gemini model to use", hint: MODEL, required: false },
   AGENT_API_TOKEN: {
     description: "Callers must send it as Authorization: Bearer <token>. Calls are refused while it is empty.",
     hint: "a long random string",
@@ -224,7 +231,7 @@ const ENV: Record<string, { description: string; hint: string; required: boolean
 };
 
 function envVars(actions: ExportAction[]): ExportEnvVar[] {
-  const keys = ["ANTHROPIC_API_KEY", "AGENT_API_TOKEN", "ANTHROPIC_MODEL"];
+  const keys = ["GEMINI_API_KEY", "AGENT_API_TOKEN", "GEMINI_MODEL"];
   if (actions.some((a) => a.works && a.gate === "approval")) keys.push("APPROVE_ALL_ACTIONS");
   for (const a of actions) if (a.works) for (const k of a.env) if (!keys.includes(k)) keys.push(k);
   return keys.map((key) => ({ key, ...ENV[key] }));
@@ -269,20 +276,17 @@ function notCarried(spec: AgentSpec, actions: ExportAction[]): string[] {
 const NODE_ACTIONS: Record<string, string> = {
   web_search: js`
   async web_search(input, ctx) {
-    const res = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 1500,
-      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }],
-      messages: [{ role: "user", content: "Search the web and answer factually with source URLs. Question: " + input.query }]
+    const data = await callModel({
+      contents: [{ role: "user", parts: [{ text: "Search the web and answer factually, citing your sources. Question: " + input.query }] }],
+      tools: [{ google_search: {} }],
+      generationConfig: { temperature: 0.2, maxOutputTokens: 4096 }
     });
-    countUsage(ctx, res.usage);
-    const answer = res.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
-    const sources = new Set();
-    for (const b of res.content) {
-      for (const c of b.citations || []) if (c.url) sources.add(c.url);
-      if (b.type === "web_search_tool_result" && Array.isArray(b.content)) for (const r of b.content) if (r.url) sources.add(r.url);
-    }
-    return { answer: answer.slice(0, 8000), sources: Array.from(sources).slice(0, 12) };
+    countUsage(ctx, data.usageMetadata);
+    const cand = (data.candidates || [])[0] || {};
+    const answer = ((cand.content && cand.content.parts) || []).map((p) => p.text || "").join("").trim();
+    const chunks = (cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || [];
+    const sources = chunks.map((c) => c.web).filter((w) => w && w.uri).map((w) => ({ title: w.title, url: w.uri })).slice(0, 12);
+    return { answer: answer.slice(0, 8000), sources };
   },`,
   fetch_url: js`
   async fetch_url(input) {
@@ -586,7 +590,64 @@ function redis(command) {
 `;
 
 const NODE_CORE = js`
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || "" });
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
+
+/** One call to Gemini on GEMINI_API_KEY. */
+async function callModel(body) {
+  const res = await fetch(GEMINI_URL + encodeURIComponent(MODEL) + ":generateContent", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-goog-api-key": need("GEMINI_API_KEY") },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(180000)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error("Gemini returned " + res.status + ": " + ((data.error && data.error.message) || "no detail"));
+  return data;
+}
+
+/** The conversation in Gemini's terms: user and model turns of parts, tool results as functionResponse. */
+function toContents(messages) {
+  const nameOf = new Map();
+  for (const m of messages) if (m.role === "assistant") for (const b of m.content) if (b.type === "tool_use") nameOf.set(b.id, b.name);
+  return messages.map((m) => {
+    if (m.role === "assistant") {
+      // Gemini's own parts carry thought signatures it needs back.
+      const parts = m.gemini && m.gemini.length ? m.gemini : m.content.map((b) => (b.type === "text" ? { text: b.text } : { functionCall: { name: b.name, args: b.input || {} } }));
+      return { role: "model", parts };
+    }
+    if (typeof m.content === "string") return { role: "user", parts: [{ text: m.content }] };
+    return {
+      role: "user",
+      parts: m.content.map((r) => ({ functionResponse: { name: nameOf.get(r.tool_use_id) || "tool", response: r.is_error ? { error: r.content } : { result: r.content } } }))
+    };
+  });
+}
+
+/** One step: the conversation so far in; the reply as text and tool_use blocks, and Gemini's own parts. */
+async function modelStep(messages, ctx) {
+  const body = {
+    system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    contents: toContents(messages),
+    generationConfig: { temperature: 0.2, maxOutputTokens: 8192 }
+  };
+  if (TOOLS.length) {
+    body.tools = [{ functionDeclarations: TOOLS.map((t) => ({ name: t.name, description: t.description, parametersJsonSchema: t.input_schema })) }];
+    // Held to the declared actions and their arguments.
+    body.toolConfig = { functionCallingConfig: { mode: "VALIDATED" } };
+  }
+  let parts = [];
+  for (let attempt = 0; attempt < 3 && !parts.length; attempt++) {
+    const data = await callModel(body);
+    countUsage(ctx, data.usageMetadata);
+    parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+  }
+  const content = [];
+  for (const p of parts) {
+    if (p.functionCall) content.push({ type: "tool_use", id: "call_" + crypto.randomUUID(), name: p.functionCall.name, input: p.functionCall.args || {} });
+    else if (p.text && !p.thought) content.push({ type: "text", text: p.text });
+  }
+  return { content, parts };
+}
 
 function need(key) {
   const value = process.env[key];
@@ -596,8 +657,8 @@ function need(key) {
 
 function countUsage(ctx, usage) {
   if (!ctx || !usage) return;
-  ctx.usage.inputTokens += usage.input_tokens || 0;
-  ctx.usage.outputTokens += usage.output_tokens || 0;
+  ctx.usage.inputTokens += usage.promptTokenCount || 0;
+  ctx.usage.outputTokens += (usage.candidatesTokenCount || 0) + (usage.thoughtsTokenCount || 0);
 }
 
 function loadSkill(input) {
@@ -655,9 +716,8 @@ export async function runAgent(input, inputs) {
   let stoppedAtLimit = false;
 
   for (let turn = 0; turn < MAX_STEPS + 2; turn++) {
-    const res = await anthropic.messages.create({ model: MODEL, max_tokens: 4000, system: SYSTEM_PROMPT, ...(TOOLS.length ? { tools: TOOLS } : {}), messages });
-    countUsage(ctx, res.usage);
-    messages.push({ role: "assistant", content: res.content });
+    const res = await modelStep(messages, ctx);
+    messages.push({ role: "assistant", content: res.content, gemini: res.parts });
     const text = res.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
     if (text) output = text;
     const uses = res.content.filter((b) => b.type === "tool_use");
@@ -762,7 +822,6 @@ function buildNodeRunner(b: Built): string {
   const ids = new Set(working.map((a) => a.id));
   const has = (...x: string[]) => x.some((i) => ids.has(i));
   const imports = [
-    `import Anthropic from "@anthropic-ai/sdk";`,
     `import crypto from "crypto";`,
     has("sql_query", "sql_execute") ? `import pg from "pg";` : "",
     has("send_email") ? `import nodemailer from "nodemailer";` : "",
@@ -786,7 +845,7 @@ function buildNodeRunner(b: Built): string {
     `}`,
     ``,
     `export const AGENT = ${JSON.stringify({ name: b.name, version: b.version })};`,
-    `export const MODEL = process.env.ANTHROPIC_MODEL || ${JSON.stringify(MODEL)};`,
+    `export const MODEL = process.env.GEMINI_MODEL || ${JSON.stringify(defaultModel(b))};`,
     `const MAX_STEPS = ${Number(b.spec.guardrails?.maxSteps) || 12};`,
     `const APPROVE_ALL = process.env.APPROVE_ALL_ACTIONS === "true";`,
     ``,
@@ -912,7 +971,7 @@ functions.http("agentFunction", async (req, res) => {
 `;
 
 function buildPackageJson(slug: string, b: Built, target: ExportTarget, runtime: ExportRuntime): string {
-  const deps: Record<string, string> = { "@anthropic-ai/sdk": "^0.32.1" };
+  const deps: Record<string, string> = {};
   for (const a of b.actions) if (a.works) Object.assign(deps, SUPPORT[a.id]?.node ?? {});
   const gcf = target === "gcp" && runtime === "serverless";
   if (gcf) deps["@google-cloud/functions-framework"] = "^3.4.2";
@@ -951,25 +1010,16 @@ CMD ["node", "server.mjs"]
 const PY_ACTIONS: Record<string, string> = {
   web_search: py`
 def web_search(inp, ctx):
-    res = client.messages.create(
-        model=MODEL,
-        max_tokens=1500,
-        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 4}],
-        messages=[{"role": "user", "content": "Search the web and answer factually with source URLs. Question: " + str(inp.get("query", ""))}],
-    )
-    count_usage(ctx, res.usage)
-    answer = "\n".join(b.text for b in res.content if b.type == "text")
-    sources = []
-    for b in res.content:
-        for c in getattr(b, "citations", None) or []:
-            url = getattr(c, "url", None)
-            if url and url not in sources:
-                sources.append(url)
-        if b.type == "web_search_tool_result" and isinstance(getattr(b, "content", None), list):
-            for r in b.content:
-                url = getattr(r, "url", None)
-                if url and url not in sources:
-                    sources.append(url)
+    data = call_model({
+        "contents": [{"role": "user", "parts": [{"text": "Search the web and answer factually, citing your sources. Question: " + str(inp.get("query", ""))}]}],
+        "tools": [{"google_search": {}}],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096},
+    })
+    count_usage(ctx, data.get("usageMetadata"))
+    cand = (data.get("candidates") or [{}])[0]
+    answer = "".join(p.get("text", "") for p in ((cand.get("content") or {}).get("parts") or [])).strip()
+    chunks = (cand.get("groundingMetadata") or {}).get("groundingChunks") or []
+    sources = [{"title": c["web"].get("title"), "url": c["web"]["uri"]} for c in chunks if (c.get("web") or {}).get("uri")]
     return {"answer": answer[:8000], "sources": sources[:12]}
 `,
   fetch_url: py`
@@ -1197,7 +1247,76 @@ def kv_key(key):
 `;
 
 const PY_CORE = py`
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
+
+
+def call_model(body):
+    """One call to Gemini on GEMINI_API_KEY."""
+    res = requests.post(GEMINI_URL + MODEL + ":generateContent", json=body,
+                        headers={"x-goog-api-key": need("GEMINI_API_KEY")}, timeout=180)
+    data = res.json() if res.content else {}
+    if not res.ok:
+        raise RuntimeError(f"Gemini returned {res.status_code}: {(data.get('error') or {}).get('message', 'no detail')}")
+    return data
+
+
+def to_contents(messages):
+    """The conversation in Gemini's terms: user and model turns of parts, tool results as functionResponse."""
+    name_of = {}
+    for m in messages:
+        if m["role"] == "assistant":
+            for b in m["content"]:
+                if b["type"] == "tool_use":
+                    name_of[b["id"]] = b["name"]
+    out = []
+    for m in messages:
+        if m["role"] == "assistant":
+            # Gemini's own parts carry thought signatures it needs back.
+            parts = m.get("gemini") or [
+                {"text": b["text"]} if b["type"] == "text" else {"functionCall": {"name": b["name"], "args": b.get("input") or {}}}
+                for b in m["content"]
+            ]
+            out.append({"role": "model", "parts": parts})
+        elif isinstance(m["content"], str):
+            out.append({"role": "user", "parts": [{"text": m["content"]}]})
+        else:
+            out.append({"role": "user", "parts": [
+                {"functionResponse": {"name": name_of.get(r["tool_use_id"], "tool"),
+                                      "response": {"error": r["content"]} if r.get("is_error") else {"result": r["content"]}}}
+                for r in m["content"]
+            ]})
+    return out
+
+
+def model_step(messages, ctx):
+    """One step: the conversation so far in; the reply as text and tool_use blocks, and Gemini's own parts."""
+    body = {
+        "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": to_contents(messages),
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 8192},
+    }
+    if TOOLS:
+        body["tools"] = [{"functionDeclarations": [
+            {"name": t["name"], "description": t["description"], "parametersJsonSchema": t["input_schema"]} for t in TOOLS
+        ]}]
+        # Held to the declared actions and their arguments.
+        body["toolConfig"] = {"functionCallingConfig": {"mode": "VALIDATED"}}
+    parts = []
+    for _ in range(3):
+        data = call_model(body)
+        count_usage(ctx, data.get("usageMetadata"))
+        parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
+        if parts:
+            break
+    content = []
+    for p in parts:
+        if "functionCall" in p:
+            content.append({"type": "tool_use", "id": "call_" + uuid.uuid4().hex, "name": p["functionCall"]["name"],
+                            "input": p["functionCall"].get("args") or {}})
+        elif p.get("text") and not p.get("thought"):
+            content.append({"type": "text", "text": p["text"]})
+    return content, parts
+
 
 HELD = {
     "status": "held_for_approval",
@@ -1214,9 +1333,9 @@ def need(key):
 
 
 def count_usage(ctx, usage):
-    if ctx is not None and usage is not None:
-        ctx["inputTokens"] += getattr(usage, "input_tokens", 0) or 0
-        ctx["outputTokens"] += getattr(usage, "output_tokens", 0) or 0
+    if ctx is not None and usage:
+        ctx["inputTokens"] += usage.get("promptTokenCount", 0) or 0
+        ctx["outputTokens"] += (usage.get("candidatesTokenCount", 0) or 0) + (usage.get("thoughtsTokenCount", 0) or 0)
 
 
 def load_skill(inp):
@@ -1263,21 +1382,12 @@ def run_agent(user_input=None, inputs=None):
     stopped_at_limit = False
 
     for _ in range(MAX_STEPS + 2):
-        res = client.messages.create(
-            model=MODEL, max_tokens=4000, system=SYSTEM_PROMPT, messages=messages, **({"tools": TOOLS} if TOOLS else {})
-        )
-        count_usage(ctx, res.usage)
-        content = []
-        for b in res.content:
-            if b.type == "text":
-                content.append({"type": "text", "text": b.text})
-            elif b.type == "tool_use":
-                content.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.input})
-        messages.append({"role": "assistant", "content": content})
-        text = "\n".join(b.text for b in res.content if b.type == "text").strip()
+        content, parts = model_step(messages, ctx)
+        messages.append({"role": "assistant", "content": content, "gemini": parts})
+        text = "\n".join(b["text"] for b in content if b["type"] == "text").strip()
         if text:
             output = text
-        uses = [b for b in res.content if b.type == "tool_use"]
+        uses = [b for b in content if b["type"] == "tool_use"]
         if not uses:
             break
 
@@ -1291,22 +1401,22 @@ def run_agent(user_input=None, inputs=None):
                 result = {"error": "Step limit reached. Do not call any more tools; write your final answer with what you have."}
             else:
                 calls += 1
-                action = ACTIONS.get(use.name)
-                if use.name == "load_skill":
-                    result = load_skill(use.input)
+                action = ACTIONS.get(use["name"])
+                if use["name"] == "load_skill":
+                    result = load_skill(use["input"])
                 elif action and action["approval"] and not APPROVE_ALL:
-                    held.append({"id": use.id, "action": use.name, "label": action["label"], "input": use.input})
+                    held.append({"id": use["id"], "action": use["name"], "label": action["label"], "input": use["input"]})
                     result = HELD
                     status = "held"
                 else:
                     try:
-                        result = perform_action(use.name, use.input, ctx)
+                        result = perform_action(use["name"], use["input"], ctx)
                     except Exception as err:  # the model is told, and decides what to do next
                         result = {"error": str(err)}
                         status = "failed"
-            steps.append({"action": use.name, "input": use.input, "status": status, "output": result,
+            steps.append({"action": use["name"], "input": use["input"], "status": status, "output": result,
                           "durationMs": int((time.time() - t0) * 1000)})
-            block = {"type": "tool_result", "tool_use_id": use.id, "content": json.dumps(result, default=str)[:30000]}
+            block = {"type": "tool_result", "tool_use_id": use["id"], "content": json.dumps(result, default=str)[:30000]}
             if status == "failed":
                 block["is_error"] = True
             results.append(block)
@@ -1325,6 +1435,9 @@ def run_agent(user_input=None, inputs=None):
 
 
 if __name__ == "__main__":
+    # Answers carry ₹ and other symbols a Windows console cannot print by default.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     print(f'Running "{AGENT["name"]}"...\n')
     out = run_agent(" ".join(sys.argv[1:]))
     print(out["output"] or "(no answer)")
@@ -1354,7 +1467,7 @@ function buildPythonRunner(b: Built): string {
     "from pathlib import Path",
     has("send_email") ? "import smtplib\nfrom email.message import EmailMessage" : "",
     "",
-    "import anthropic",
+    "import uuid",
     "import requests",
     has("sql_query", "sql_execute") ? "import psycopg\nfrom psycopg.rows import dict_row" : "",
     has("s3_upload_file") ? "import boto3" : "",
@@ -1378,7 +1491,7 @@ function buildPythonRunner(b: Built): string {
     `    pass`,
     ``,
     `AGENT = ${pyValue({ name: b.name, version: b.version })}`,
-    `MODEL = os.environ.get("ANTHROPIC_MODEL") or ${JSON.stringify(MODEL)}`,
+    `MODEL = os.environ.get("GEMINI_MODEL") or ${JSON.stringify(defaultModel(b))}`,
     `MAX_STEPS = ${Number(b.spec.guardrails?.maxSteps) || 12}`,
     `APPROVE_ALL = os.environ.get("APPROVE_ALL_ACTIONS", "").lower() == "true"`,
     ``,
@@ -1465,7 +1578,6 @@ if __name__ == "__main__":
 
 function buildPythonRequirements(b: Built): string {
   const reqs = [
-    "anthropic>=0.49.0",
     "requests>=2.31.0",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.28.0",
@@ -1730,7 +1842,14 @@ function buildReadme(
 Exported from Agent Studio: ${versionLabel(b.version)}, packaged for **${platform}**.
 ${b.spec.purpose ? `\n${b.spec.purpose}\n` : ""}
 This is the agent on its own: its instructions (\`system_prompt.txt\`), skills and
-actions, and a small service to call it. It runs on your Anthropic key.
+actions, and a small service to call it. It runs on your Google Gemini key.${
+    providerOf(b.spec) !== "gemini"
+      ? `
+
+> In Agent Studio this agent runs on ${PROVIDERS[providerOf(b.spec)].label}. The exported package runs
+> on Gemini instead: set \`GEMINI_API_KEY\`, and check its answers before relying on them.`
+      : ""
+  }
 
 ## What it can do
 

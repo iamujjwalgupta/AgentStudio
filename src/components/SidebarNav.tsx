@@ -53,6 +53,7 @@ export default function SidebarNav({
       title: "Workspace",
       items: [
         ...(showMembers ? [{ href: "/members", label: "Members", icon: "members" }] : []),
+        ...(showMembers ? [{ href: "/api-keys", label: "API keys", icon: "key", hint: "Let other applications call your agents" }] : []),
         { href: "/shares", label: "Shares", icon: "shares", badge: shares, hint: shares ? `${shares} shared with you` : undefined },
       ],
     },

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { q, one } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { audit } from "@/lib/ai";
+import { acceptInvitation } from "@/lib/invitations";
 
 export const runtime = "nodejs";
 
@@ -41,15 +41,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, status: "declined" });
   }
 
-  await q(
-    `insert into memberships (user_id, org_id, role) values ($1,$2,$3)
-     on conflict (user_id, org_id) do update set role = excluded.role`,
-    [u.id, inv.org_id, inv.role],
-  );
-  await q(`update invitations set status='accepted', accepted_at=now(), accepted_by=$2 where id=$1`, [inv.id, u.id]);
-  // Drop them straight into the workspace they just joined.
-  await q(`update users set active_org_id = $2 where id = $1`, [u.id, inv.org_id]);
-
-  await audit(inv.org_id, u, "Joined workspace", "user", u.id, { role: inv.role, invitedBy: inv.invited_by_name });
+  // Drops them straight into the workspace they just joined.
+  await acceptInvitation(inv, u);
   return NextResponse.json({ ok: true, status: "accepted", orgName: inv.org_name });
 }

@@ -33,8 +33,8 @@ export default async function AgentPage({
   if (!agent) notFound();
 
   const [connections, versions, published, runs, stats, pending, skills, workspaceAgents, taxonomy, usage] = await Promise.all([
-    // The Anthropic key powers the run itself; it is not a source an agent reads from.
-    q<any>(`select id, name, kind, config from connections where org_id = $1 and kind not in ('anthropic', 'gemini') order by name`, [u.orgId]),
+    // The model key powers the run itself; it is not a source an agent reads from.
+    q<any>(`select id, name, kind, config from connections where org_id = $1 and kind not in ('gemini', 'anthropic', 'openai', 'azure_openai', 'openai_compatible') order by name`, [u.orgId]),
     q<any>(
       `select v.version, v.note, v.created_at, us.name as by from agent_versions v
        left join users us on us.id = v.created_by where v.agent_id = $1 order by v.version desc`,

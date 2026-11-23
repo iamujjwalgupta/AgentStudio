@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { KindIcon } from "@/components/ConnectorIcons";
 import { AlertIcon, CheckIcon, ClockIcon, CrossIcon, GridIcon, ListIcon, PencilIcon, SearchIcon, TrashIcon } from "@/components/agent-ui";
 import {
-  CONNECTION_GROUPS, CONNECTION_TYPES, SINGLE_KINDS, missingFor, typeOf, type ConnectionType,
+  CONNECTION_GROUPS, CONNECTION_TYPES, MODEL_KINDS, SINGLE_KINDS, missingFor, typeOf, type ConnectionType,
 } from "@/lib/connection-types";
 
 type Conn = {
@@ -25,7 +25,7 @@ type Activity = { action: string; actor_name: string; detail: any; at: string };
 /** Where a connection points, in a few words, from what it stores. */
 function whereOf(c: Conn): string {
   const k = c.config || {};
-  return k.baseUrl || k.host || (k.bucket ? `${k.bucket}${k.region ? ` · ${k.region}` : ""}` : "") || k.channel || k.repo || k.email || k.model || "";
+  return k.baseUrl || k.endpoint || k.host || (k.bucket ? `${k.bucket}${k.region ? ` · ${k.region}` : ""}` : "") || k.channel || k.repo || k.email || k.model || "";
 }
 
 /** Why a connection will not work as it stands, or "". */
@@ -55,7 +55,7 @@ function healthOf(c: Conn): Health {
 }
 const HEALTH_LABEL: Record<Health, string> = { ready: "Ready", attention: "Needs attention", failing: "Last test failed" };
 
-export default function ConnectionsManager({ powers }: { powers: Record<string, string[]> }) {
+export default function ConnectionsManager({ powers, canManage = false }: { powers: Record<string, string[]>; canManage?: boolean }) {
   const router = useRouter();
   const params = useSearchParams();
   const [conns, setConns] = useState<Conn[] | null>(null);
@@ -143,7 +143,7 @@ export default function ConnectionsManager({ powers }: { powers: Record<string, 
   });
   const groups = CONNECTION_GROUPS.map((g) => ({ ...g, conns: shown.filter((c) => typeOf(c.kind)?.group === g.id) })).filter((g) => g.conns.length);
   const stray = shown.filter((c) => !typeOf(c.kind));
-  const hasModelKey = list.some((c) => c.kind === "anthropic");
+  const hasModelKey = list.some((c) => MODEL_KINDS.has(c.kind) && (c.has_secret || c.kind === "openai_compatible"));
   const current = list.find((c) => c.id === selected) ?? null;
 
   const card = (c: Conn) => {
@@ -186,11 +186,12 @@ export default function ConnectionsManager({ powers }: { powers: Record<string, 
       </header>
 
       {error && <div className="error" style={{ marginBottom: 14 }}>{error}</div>}
+      {canManage && conns && <WorkspaceKeyCard conns={conns} />}
       {conns && !hasModelKey && (
         <div className="cx-alert">
           <AlertIcon />
-          <span className="grow">No Anthropic key yet: agents cannot run until one is added.</span>
-          <button className="btn btn-primary" onClick={() => setForm({ type: typeOf("anthropic")!, conn: null })}>Add the key</button>
+          <span className="grow">No AI model key yet: agents cannot run until one is added. Gemini is the default; Anthropic, OpenAI and others can be added too.</span>
+          <button className="btn btn-primary" onClick={() => setForm({ type: typeOf("gemini")!, conn: null })}>Add the key</button>
         </div>
       )}
 
@@ -235,7 +236,7 @@ export default function ConnectionsManager({ powers }: { powers: Record<string, 
       ) : list.length === 0 ? (
         <div className="cx-empty">
           <b>No connections yet</b>
-          <span>Add the Anthropic key first, then the systems your agents need.</span>
+          <span>Add an AI model key first (Gemini is the default), then the systems your agents need.</span>
           <button className="btn btn-primary" onClick={() => setCatalogOpen(true)}>+ Add connection</button>
         </div>
       ) : shown.length === 0 ? (
@@ -338,6 +339,93 @@ export default function ConnectionsManager({ powers }: { powers: Record<string, 
         />
       )}
     </div>
+  );
+}
+
+type KeyOption = { value: string; provider: string; label: string; model: string };
+
+/**
+ * The workspace AI key, for the owner and admins: the one key drafting runs on.
+ * A choice is tested before it is saved. Reloads whenever the connections do,
+ * so a key just added is offered straight away.
+ */
+function WorkspaceKeyCard({ conns }: { conns: Conn[] }) {
+  const [data, setData] = useState<{ value: string; broken: boolean; options: KeyOption[] } | null>(null);
+  const [pick, setPick] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    fetch("/api/workspace/ai-key", { cache: "no-store" })
+      .then((r) => r.json().then((j) => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => {
+        if (!live) return;
+        if (!ok) return setMsg({ ok: false, text: j.error || "The workspace AI key could not be loaded." });
+        setData(j);
+        setPick((p) => p || j.value || j.options?.[0]?.value || "");
+      })
+      .catch(() => live && setMsg({ ok: false, text: "The workspace AI key could not be loaded." }));
+    return () => {
+      live = false;
+    };
+  }, [conns]);
+
+  async function save() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await fetch("/api/workspace/ai-key", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ value: pick }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "It could not be saved.");
+      setData((d) => (d ? { ...d, value: j.value, broken: false } : d));
+      setMsg({ ok: true, text: `Saved. ${j.test?.detail ?? ""}`.trim() });
+    } catch (e: any) {
+      setMsg({ ok: false, text: e.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!data) return msg ? <div className="error" style={{ marginBottom: 14 }}>{msg.text}</div> : null;
+  const current = data.options.find((o) => o.value === data.value);
+  const off = !data.value || data.broken;
+  return (
+    <section className={`cx-wskey ${off ? "off" : ""}`} aria-labelledby="cx-wskey-title">
+      <div className="cx-wskey-text">
+        <b id="cx-wskey-title">Workspace AI key <span className="cx-wskey-tag">Admins only</span></b>
+        <span>
+          Drafting agents and skills runs on this key and no other: if it stops working, drafting stops until it is changed.
+          New agents start on it, and anyone can switch an agent to another key they add here.
+        </span>
+        {off ? (
+          <span className="cx-wskey-warn">
+            <AlertIcon size={12} />{" "}
+            {data.broken ? "The chosen key has been removed, so drafting is off. Choose another." : data.options.length ? "No key is chosen, so drafting is off." : "Add an AI model key below, then choose it here. Drafting is off until then."}
+          </span>
+        ) : (
+          current && <span className="cx-wskey-now">In use: <strong>{current.label}</strong>{current.model ? ` · ${current.model}` : ""}</span>
+        )}
+        {msg && <span className={msg.ok ? "cx-ok" : "cx-bad"}>{msg.text}</span>}
+      </div>
+      {data.options.length > 0 && (
+        <div className="cx-wskey-pick">
+          <select className="input" value={pick} onChange={(e) => { setPick(e.target.value); setMsg(null); }} disabled={busy} aria-label="Workspace AI key">
+            {!pick && <option value="">Choose a key…</option>}
+            {data.options.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}{o.model ? ` · ${o.model}` : ""}</option>
+            ))}
+          </select>
+          <button className="btn btn-primary" onClick={save} disabled={busy || !pick || (pick === data.value && !data.broken)}>
+            {busy ? "Testing…" : "Test and save"}
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -614,7 +702,23 @@ function ConnectionForm({
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="How it is listed, e.g. SAP ERP ledger" />
           </label>
           {type.fields.map((f) =>
-            f.kind === "checkbox" ? (
+            f.kind === "select" ? (
+              <label key={f.key} className="field">
+                <span className="cx-label">{f.label}</span>
+                <select
+                  className="input"
+                  value={config[f.key] ?? ""}
+                  onChange={(e) => {
+                    const o = f.options?.find((x) => x.value === e.target.value);
+                    setConfig({ ...config, ...(o?.fill ?? {}), [f.key]: e.target.value });
+                    if (o && (!name.trim() || name === type.label || f.options!.some((x) => x.label === name))) setName(o.value === "custom" ? type.label : o.label);
+                  }}
+                >
+                  <option value="">Choose…</option>
+                  {f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </label>
+            ) : f.kind === "checkbox" ? (
               <label key={f.key} className="cx-check">
                 <input type="checkbox" checked={!!config[f.key]} onChange={(e) => setConfig({ ...config, [f.key]: e.target.checked })} />
                 <span>

@@ -20,7 +20,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const u = await requireUser();
   const { engine, agent, tools, transcript } = await req.json().catch(() => ({}));
-  if (engine !== "anthropic" && engine !== "gemini") return NextResponse.json({ error: "Choose a model to test with." }, { status: 400 });
+  if (engine !== "gemini") return NextResponse.json({ error: "Testing runs on Gemini: add a Gemini key under Connections." }, { status: 400 });
   if (!agent?.name || !Array.isArray(transcript) || !transcript.length) return NextResponse.json({ error: "Nothing to send yet." }, { status: 400 });
   if (transcript.length > 80) return NextResponse.json({ error: "This test has gone on long enough. Start a new one." }, { status: 400 });
   try {

@@ -9,9 +9,11 @@
 # Permission changes your account is not allowed to make are written to
 # deploy/admin-grants-step1.sh for a project admin to run; everything else carries on.
 #
-# Optional environment variables, read only when a secret does not exist yet:
-#   ANTHROPIC_API_KEY  otherwise you are prompted for it
+# Optional environment variable, read only when the secret does not exist yet:
 #   AUTH_SECRET        e.g. the value from an existing install, so its saved connections still decrypt
+#
+# The model key (Google Gemini) is not a deploy setting: an admin adds it in the app,
+# under Connections, after the first deploy.
 source "$(dirname "$0")/lib.sh"
 
 require_project
@@ -134,21 +136,10 @@ else
   openssl rand -hex 32 | tr -d '\n' | create_secret CRON_SECRET
 fi
 
-if secret_exists ANTHROPIC_API_KEY; then
-  info "ANTHROPIC_API_KEY exists"
-else
-  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    read -rsp "    Paste your Anthropic API key (input hidden) and press Enter: " ANTHROPIC_API_KEY
-    echo
-  fi
-  [ -n "${ANTHROPIC_API_KEY}" ] || die "No Anthropic API key given."
-  printf '%s' "${ANTHROPIC_API_KEY}" | create_secret ANTHROPIC_API_KEY
-fi
-
 # Access to each secret, rather than to every secret in the project. Skipped where the
 # account can already read them: project-wide Secret Accessor, Editor or Owner.
 RUNTIME_ROLES="$(project_roles_of "serviceAccount:${RUNTIME_SA}")"
-for s in DATABASE_URL ANTHROPIC_API_KEY AUTH_SECRET CRON_SECRET; do
+for s in DATABASE_URL AUTH_SECRET CRON_SECRET; do
   if printf '%s\n' "${RUNTIME_ROLES}" | grep -qxE 'roles/secretmanager.secretAccessor|roles/secretmanager.admin|roles/editor|roles/owner'; then
     info "ok: app may read secret ${s} (project-wide role)"
   elif gcloud secrets get-iam-policy "${s}" --format=json 2>/dev/null | grep -q "serviceAccount:${RUNTIME_SA}"; then

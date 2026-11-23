@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth";
 import { one } from "@/lib/db";
 import { synthesizeSkillFromCorrection, type CorrectionContext } from "@/lib/ai";
+import { draftingError } from "@/lib/models";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -69,7 +70,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ draft, agentId: targetAgentId });
   } catch (err: any) {
     return NextResponse.json(
-      { error: err?.message || "Failed to synthesize skill from correction." },
+      { error: draftingError(err, u.canManageMembers, "Failed to synthesize skill from correction.") },
       { status: 500 },
     );
   }

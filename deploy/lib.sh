@@ -12,24 +12,54 @@ if [ -n "${RUNTIME_SA_EMAIL}" ]; then
   RUNTIME_SA="${RUNTIME_SA_EMAIL}"
 fi
 SECRETS_MODE="${SECRETS_MODE:-secret-manager}"
+ACCESS_MODE="${ACCESS_MODE:-iap}"
+MEMORY="${MEMORY:-2Gi}"
 case "${SECRETS_MODE}" in
   secret-manager|env) ;;
   *) printf 'SECRETS_MODE must be "secret-manager" or "env", not "%s"\n' "${SECRETS_MODE}" >&2; exit 1 ;;
 esac
 
-APP_SECRETS=(DATABASE_URL AUTH_SECRET CRON_SECRET ANTHROPIC_API_KEY)
+APP_SECRETS=(DATABASE_URL AUTH_SECRET CRON_SECRET)
+# Settings of an earlier version that the app no longer uses: dropped from the service.
+RETIRED_SETTINGS=(ANTHROPIC_API_KEY ANTHROPIC_MODEL)
 
-# SECRETS_MODE=env: the four values, kept in a private file in your Cloud Shell home
+# SECRETS_MODE=env: the three values, kept in a private file in your Cloud Shell home
 # (outside the project folder, so it is never uploaded to Cloud Build). Each value is
-# taken from that file, else read from Secret Manager, else generated (or asked for).
+# taken from that file, else from the running service, else read from Secret Manager,
+# else generated (or asked for) -- but never generated for a service that already
+# exists, where a new AUTH_SECRET would make every saved connection unreadable.
 load_plain_secrets() {
-  local file="${HOME}/.agent-studio-${PROJECT_ID}.env" name value changed=0
+  local file="${HOME}/.agent-studio-${PROJECT_ID}.env" name value changed=0 live_json=""
   # shellcheck disable=SC1090
   [ -f "${file}" ] && source "${file}"
+  live_json="$(gcloud run services describe "${SERVICE}" --region="${REGION}" --format=json 2>/dev/null || true)"
+  local py="" c
+  for c in python3 python; do
+    if command -v "${c}" >/dev/null 2>&1 && "${c}" -c 'import json' >/dev/null 2>&1; then py="${c}"; break; fi
+  done
+  [ -n "${live_json}" ] && [ -z "${py}" ] && warn "python3 not found: cannot read values from the running service"
   for name in "${APP_SECRETS[@]}"; do
     value="${!name:-}"
+    if [ -z "${value}" ] && [ -n "${live_json}" ] && [ -n "${py}" ]; then
+      value="$(printf '%s' "${live_json}" | "${py}" -c '
+import json, sys
+name = sys.argv[1]
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for c in d.get("spec", {}).get("template", {}).get("spec", {}).get("containers", []) or []:
+    for e in c.get("env", []) or []:
+        if e.get("name") == name and isinstance(e.get("value"), str):
+            sys.stdout.write(e["value"])
+' "${name}" 2>/dev/null || true)"
+      [ -n "${value}" ] && { changed=1; info "${name}: taken from the running service"; }
+    fi
     if [ -z "${value}" ]; then
       value="$(gcloud secrets versions access latest --secret="${name}" 2>/dev/null || true)"
+    fi
+    if [ -z "${value}" ] && [ -n "${live_json}" ]; then
+      die "${name} could not be read from ${file}, the running service or Secret Manager. Refusing to make a new one: the service '${SERVICE}' already exists, and a new ${name} would cut it off from its data. Ask whoever deployed it for the value, or for read access to it."
     fi
     if [ -z "${value}" ]; then
       changed=1
@@ -44,11 +74,6 @@ load_plain_secrets() {
           ;;
         AUTH_SECRET|CRON_SECRET)
           value="$(openssl rand -hex 32)"
-          ;;
-        ANTHROPIC_API_KEY)
-          read -rsp "    Paste your Anthropic API key (input hidden) and press Enter: " value
-          echo
-          [ -n "${value}" ] || die "No Anthropic API key given."
           ;;
       esac
       # Keep Secret Manager in step where allowed, for a later switch back to it.
@@ -70,7 +95,7 @@ load_plain_secrets() {
 # gcloud cannot switch a variable between the two kinds in one command, so a switch of
 # SECRETS_MODE has to clear the old kind first.
 value_kinds() {
-  local json keys="DATABASE_URL|AUTH_SECRET|CRON_SECRET|ANTHROPIC_API_KEY"
+  local json keys="DATABASE_URL|AUTH_SECRET|CRON_SECRET"
   # Whitespace removed so the checks do not depend on how gcloud pretty-prints JSON.
   json="$(gcloud run "$1" describe "$2" --region="${REGION}" --format=json 2>/dev/null | tr -d ' \t\r\n' || true)"
   [ -n "${json}" ] || return 0
@@ -81,6 +106,34 @@ value_kinds() {
   if grep -qE "\"name\":\"(${keys})\",\"value\":|\"value\":\"[^\"]*\",\"name\":\"(${keys})\"" <<<"${json}"; then
     echo plain
   fi
+}
+
+# keep_live_env FILE NAME... : appends to an --env-vars-file every plain environment
+# variable the running service has that is not one of NAME. --env-vars-file replaces
+# all variables, so without this a setting added to the service by hand would be lost.
+keep_live_env() {
+  local file="$1" json py="" c; shift
+  json="$(gcloud run services describe "${SERVICE}" --region="${REGION}" --format=json 2>/dev/null || true)"
+  [ -n "${json}" ] || return 0
+  for c in python3 python; do
+    if command -v "${c}" >/dev/null 2>&1 && "${c}" -c 'import json' >/dev/null 2>&1; then py="${c}"; break; fi
+  done
+  [ -n "${py}" ] || { warn "python3 not found: settings added to the service by hand are not carried over"; return 0; }
+  printf '%s' "${json}" | "${py}" -c '
+import json, sys
+skip = set(sys.argv[2:])
+d = json.load(sys.stdin)
+kept = []
+with open(sys.argv[1], "a", encoding="utf-8") as out:
+    for c in d.get("spec", {}).get("template", {}).get("spec", {}).get("containers", []) or []:
+        for e in c.get("env", []) or []:
+            n, v = e.get("name"), e.get("value")
+            if n and isinstance(v, str) and n not in skip:
+                out.write("%s: %s\n" % (n, json.dumps(v)))
+                kept.append(n)
+if kept:
+    print("    kept from the running service: " + ", ".join(kept))
+' "${file}" "$@"
 }
 
 # write_env_yaml FILE KEY=VALUE... : an --env-vars-file for gcloud run.

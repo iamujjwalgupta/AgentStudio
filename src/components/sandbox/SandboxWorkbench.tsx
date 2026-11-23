@@ -23,7 +23,7 @@ type ImportedAgent = {
 type Suggestion = { id: string | null; match: "same" | "likely" | "none" };
 type CatalogTool = { id: string; label: string; description: string; risk: string; needs: string | null };
 type Example = { id: string; title: string; blurb: string; language: string; code: string; framework: Framework; frameworkLabel: string; prompts: string[] };
-type EngineInfo = { id: "anthropic" | "gemini"; label: string; model: string };
+type EngineInfo = { id: "gemini"; label: string; model: string };
 type ToolCall = { id: string; name: string; args: any };
 type Turn =
   | { role: "user"; text: string }
@@ -97,7 +97,7 @@ export default function SandboxWorkbench({ initialFramework = "" }: { initialFra
 
   // ---- test ----------------------------------------------------------------------
   const [engines, setEngines] = useState<EngineInfo[] | null>(null);
-  const [engine, setEngine] = useState<"anthropic" | "gemini" | "">("");
+  const [engine, setEngine] = useState<"gemini" | "">("");
   const [transcript, setTranscript] = useState<Turn[]>([]);
   const [pending, setPending] = useState<Pending[]>([]);
   const [sources, setSources] = useState<Record<string, Source>>({});
@@ -543,8 +543,8 @@ export default function SandboxWorkbench({ initialFramework = "" }: { initialFra
                 <AlertIcon size={16} />
                 <div>
                   <b>No model to test with</b>
-                  <p>Testing needs an Anthropic (Claude) or Google Gemini key. Add one and come back — nothing is simulated.</p>
-                  <Link className="btn btn-sm btn-primary" href="/connections?add=anthropic">Add a model key</Link>
+                  <p>Testing needs the workspace's Google Gemini key. Add it and come back — nothing is simulated.</p>
+                  <Link className="btn btn-sm btn-primary" href="/connections?add=gemini">Add the Gemini key</Link>
                 </div>
               </div>
             ) : (
@@ -660,7 +660,7 @@ export default function SandboxWorkbench({ initialFramework = "" }: { initialFra
               )}
               <button className="sb-link" onClick={() => setStage("check")}><ArrowLeftIcon size={11} /> Change tools</button>
             </section>
-            {!!engines?.length && <p className="sb-meter">Each message uses your {engine === "gemini" ? "Gemini" : "Anthropic"} key and counts towards <Link href="/usage">Usage &amp; limits</Link>.</p>}
+            {!!engines?.length && <p className="sb-meter">Each message uses your Gemini key and counts towards <Link href="/usage">Usage &amp; limits</Link>.</p>}
           </aside>
         </div>
       )}

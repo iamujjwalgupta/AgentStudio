@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import AgentConstellation from "./AgentConstellation";
 
 type Mode = "login" | "register";
-type Invite = { token: string; valid: boolean | null; email?: string; org?: string; invitedBy?: string };
+type Invite = { token: string; valid: boolean | null; email?: string; org?: string; invitedBy?: string; hasAccount?: boolean };
 
 const WORDS = ["agent.", "analyst.", "reviewer.", "assistant."];
 
@@ -22,8 +22,9 @@ export default function LoginScreen() {
   const [caps, setCaps] = useState(false);
   const panel = useRef<HTMLElement>(null);
 
-  // An invitation link lands here: sign-up then joins that workspace instead of
-  // creating one, and the page says which workspace and who sent it.
+  // An invitation link lands here: sign-up (or sign-in, when the address already
+  // has an account) then joins that workspace instead of creating one, and the
+  // page says which workspace and who sent it.
   useEffect(() => {
     const token = new URLSearchParams(window.location.search).get("invite");
     if (!token) return;
@@ -32,8 +33,9 @@ export default function LoginScreen() {
     fetch(`/api/auth?invite=${encodeURIComponent(token)}`)
       .then((r) => r.json())
       .then((j) => {
-        setInvite({ token, valid: Boolean(j.valid), email: j.email, org: j.org, invitedBy: j.invitedBy });
+        setInvite({ token, valid: Boolean(j.valid), email: j.email, org: j.org, invitedBy: j.invitedBy, hasAccount: Boolean(j.hasAccount) });
         if (j.valid && j.email) setForm((f) => ({ ...f, email: j.email }));
+        if (j.valid && j.hasAccount) setMode("login");
       })
       .catch(() => setInvite({ token, valid: null }));
   }, []);
@@ -59,7 +61,7 @@ export default function LoginScreen() {
         body: JSON.stringify({
           action: mode,
           ...form,
-          invite: mode === "register" && joining ? invite?.token : undefined,
+          invite: joining ? invite?.token : undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -90,22 +92,16 @@ export default function LoginScreen() {
     panel.current!.style.setProperty("--my", `${e.clientY - r.top}px`);
   };
 
-  const title =
-    mode === "login"
-      ? "Welcome back"
-      : joining
-        ? invite?.org
-          ? `Join ${invite.org}`
-          : "Join the workspace"
-        : "Create your workspace";
-  const sub =
-    mode === "login"
+  const joinTitle = invite?.org ? `Join ${invite.org}` : "Join the workspace";
+  const invitedBy = invite?.invitedBy ? `${invite.invitedBy} invited you. ` : "";
+  const title = joining ? joinTitle : mode === "login" ? "Welcome back" : "Create your account";
+  const sub = joining
+    ? mode === "login"
+      ? `${invitedBy}Sign in to your account to accept.`
+      : `${invitedBy}Create your account to accept.`
+    : mode === "login"
       ? "Sign in to your workspace: your agents, approvals and audit trail."
-      : joining
-        ? invite?.invitedBy
-          ? `${invite.invitedBy} invited you. Create your account to accept.`
-          : "Create your account to accept the invitation."
-        : "You'll be its first admin, and can invite your team afterwards.";
+      : "We'll set up your first workspace. You'll be its admin, and can invite your team afterwards.";
 
   return (
     <div className={`lg${done ? " lg-done" : ""}`}>
@@ -150,18 +146,18 @@ export default function LoginScreen() {
 
         <div className={`lg-card${shaking ? " lg-shake" : ""}`} onAnimationEnd={(e) => e.animationName === "lg-shake" && setShaking(false)}>
           {!joining && (
-            <div className="lg-tabs" role="tablist" aria-label="Sign in or create a workspace">
+            <div className="lg-tabs" role="tablist" aria-label="Sign in or sign up">
               <span className={`lg-thumb${mode === "register" ? " right" : ""}`} aria-hidden="true" />
               <button type="button" role="tab" aria-selected={mode === "login"} className={mode === "login" ? "on" : ""} onClick={() => switchMode("login")}>
                 Sign in
               </button>
               <button type="button" role="tab" aria-selected={mode === "register"} className={mode === "register" ? "on" : ""} onClick={() => switchMode("register")}>
-                Create workspace
+                Sign up
               </button>
             </div>
           )}
 
-          {invite && mode === "register" && (
+          {invite && (joining || mode === "register") && (
             <div className={`lg-invite${invite.valid === false ? " bad" : ""}`}>
               {invite.valid === false
                 ? "This invitation is no longer valid. Ask for a new one, or create your own workspace below."
@@ -189,8 +185,8 @@ export default function LoginScreen() {
               onChange={(v) => set("email", v)}
               autoComplete="email"
               icon={<Mail />}
-              readOnly={mode === "register" && joining && Boolean(invite?.email)}
-              hint={mode === "register" && joining && invite?.email ? "The invitation was sent to this address." : undefined}
+              readOnly={joining && Boolean(invite?.email)}
+              hint={joining && invite?.email ? "The invitation was sent to this address." : undefined}
             />
             <Field
               label="Password"
@@ -216,11 +212,11 @@ export default function LoginScreen() {
             <button className={`lg-submit${busy ? " busy" : ""}${done ? " ok" : ""}`} type="submit" disabled={busy || done}>
               <span className="lg-submit-label">
                 {done ? (
-                  <><Check /> {mode === "login" ? "Signed in" : "Workspace ready"}</>
+                  <><Check /> {joining ? "Joined" : mode === "login" ? "Signed in" : "Workspace ready"}</>
                 ) : busy ? (
                   <><span className="lg-spin" /> {mode === "login" ? "Signing in…" : "Setting up…"}</>
                 ) : (
-                  <>{mode === "login" ? "Sign in" : joining ? "Join workspace" : "Create workspace"} <Arrow /></>
+                  <>{joining ? (mode === "login" ? "Sign in and join" : "Join workspace") : mode === "login" ? "Sign in" : "Sign up"} <Arrow /></>
                 )}
               </span>
             </button>
@@ -230,14 +226,17 @@ export default function LoginScreen() {
             <p className="lg-switch">
               {mode === "login" ? "New to Agent Studio?" : "Already have an account?"}{" "}
               <button type="button" onClick={() => switchMode(mode === "login" ? "register" : "login")}>
-                {mode === "login" ? "Create a workspace" : "Sign in"}
+                {mode === "login" ? "Sign up" : "Sign in"}
               </button>
             </p>
           )}
+          {/* Switching keeps the invitation: either way, the workspace is joined. */}
           {joining && (
             <p className="lg-switch">
-              Already have an account?{" "}
-              <button type="button" onClick={() => { setInvite(null); switchMode("login"); }}>Sign in instead</button>
+              {mode === "login" ? "No account yet?" : "Already have an account?"}{" "}
+              <button type="button" onClick={() => switchMode(mode === "login" ? "register" : "login")}>
+                {mode === "login" ? "Create one to join" : "Sign in to join"}
+              </button>
             </p>
           )}
         </div>

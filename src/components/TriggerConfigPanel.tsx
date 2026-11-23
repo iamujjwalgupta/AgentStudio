@@ -131,6 +131,8 @@ export default function ScheduleStep({
     null,
     2,
   );
+  // The whole request, language-neutral: what any HTTP client sends.
+  const exampleCall = `POST ${endpoint}?wait=true\nAuthorization: Bearer YOUR_API_KEY\nContent-Type: application/json\n\n${exampleBody}`;
   const copy = (what: "url" | "body", value: string) => {
     navigator.clipboard?.writeText(value);
     setCopied(what);
@@ -299,12 +301,18 @@ export default function ScheduleStep({
                 <div className="grow">
                   <b>Call it from another system</b>
                   <span>
-                    Start this agent with one HTTPS request, made while signed in to this workspace. It runs the live version, or the
-                    draft until one is published.
+                    Another application starts this agent with one HTTPS request and a workspace API key. It runs the published
+                    version, with the same limits, approvals and audit trail as any run.
                   </span>
                 </div>
                 <a className="ab-link" href={`/api/v1/agents/${agentId}/invoke`} target="_blank" rel="noreferrer">API description ↗</a>
               </div>
+              {!isLive && (
+                <div className="ab-api-warn">
+                  <AlertIcon size={13} />
+                  <span>Not published yet, so calls with an API key are refused. Publish it first. (Calls made from your signed-in browser run the draft, for testing.)</span>
+                </div>
+              )}
               <div className="ab-api-url">
                 <span className="ab-method">POST</span>
                 <code title={endpoint}>{endpoint}</code>
@@ -312,11 +320,18 @@ export default function ScheduleStep({
                   {copied === "url" ? <><CheckIcon size={13} /> Copied</> : <><CopyIcon size={13} /> Copy</>}
                 </button>
               </div>
+              <div className="ab-api-key">
+                <span>
+                  Authenticate with <code>Authorization: Bearer as_live_…</code>. Add <code>?wait=true</code> to get the answer in the
+                  same response; otherwise ask the returned <code>statusUrl</code> until it finishes.
+                </span>
+                <a className="ab-link" href="/api-keys">Get an API key →</a>
+              </div>
               <details className="ab-api-ex">
-                <summary>Example request body</summary>
+                <summary>Example call</summary>
                 <div className="ab-api-pre">
-                  <pre>{exampleBody}</pre>
-                  <button type="button" className="ab-copy" onClick={() => copy("body", exampleBody)}>
+                  <pre>{exampleCall}</pre>
+                  <button type="button" className="ab-copy" onClick={() => copy("body", exampleCall)}>
                     {copied === "body" ? <><CheckIcon size={13} /> Copied</> : <><CopyIcon size={13} /> Copy</>}
                   </button>
                 </div>

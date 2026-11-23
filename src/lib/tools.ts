@@ -8,7 +8,9 @@ import { skillName, type SkillRow } from "./skills";
 import type { Risk } from "./types";
 import { assertSafeUrl } from "./ssrf";
 import { storedPath } from "./storage";
-import { anthropicUsage, assertWithinLimits, recordUsage } from "./metering";
+import { assertWithinLimits, recordUsage } from "./metering";
+import { engineAccess } from "./models";
+import { PROVIDERS, type ProviderId } from "./providers";
 
 export type ToolContext = {
   orgId: string;
@@ -23,7 +25,9 @@ export type ToolContext = {
    */
   apiKey: string;
   model: string;
-  engine?: "anthropic" | "gemini";
+  engine?: ProviderId;
+  /** The agent's OpenAI-compatible connection, when it runs on one. */
+  providerConnectionId?: string;
   runId?: string;
   agentId?: string;
 };
@@ -53,7 +57,6 @@ export type ToolDef = {
   run: (input: any, ctx: ToolContext) => Promise<any>;
 };
 
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
 
 /**
  * The granted connection an action means. Models name connections loosely
@@ -231,15 +234,101 @@ async function parseDocument(filePath: string, name: string): Promise<string> {
   return fs.readFile(filePath, "utf8");
 }
 
+/* ── web search ────────────────────────────────────────────── */
+
+/**
+ * Web search on the agent's own provider when it has one built in (Gemini,
+ * Anthropic, OpenAI); otherwise, or when that key cannot be used, on the first
+ * of those the workspace has a key for.
+ */
+async function webSearch(query: string, ctx: ToolContext) {
+  const own = ctx.engine ?? "gemini";
+  const order = [...new Set<ProviderId>([own, "gemini", "anthropic", "openai"])].filter((p) => PROVIDERS[p].webSearch);
+  let last: any = null;
+  for (const p of order) {
+    let access;
+    try {
+      access = await engineAccess(ctx.orgId, p, p === own ? ctx.model : undefined, p === own ? ctx.providerConnectionId : undefined);
+    } catch (e) {
+      continue;
+    }
+    try {
+      if (p === "gemini") return await geminiSearch(query, { ...ctx, apiKey: access.apiKey, model: access.model });
+      if (p === "anthropic") return await anthropicSearch(query, ctx, access.apiKey, access.model);
+      return await openaiSearch(query, ctx, access.apiKey, access.model);
+    } catch (e: any) {
+      // A key that cannot search (no credit, a model without search) passes to the next.
+      last = e;
+    }
+  }
+  throw last ?? new Error("Web search needs a Google Gemini, Anthropic or OpenAI key. An admin can add one under Connections.");
+}
+
+async function anthropicSearch(query: string, ctx: ToolContext, apiKey: string, model: string) {
+  await assertWithinLimits(ctx.orgId, "anthropic", ctx.agentId);
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model,
+      max_tokens: 1500,
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }],
+      messages: [{ role: "user", content: `Search the web and answer factually, citing your sources. Question: ${query}` }],
+    }),
+    signal: AbortSignal.timeout(90_000),
+  });
+  const data: any = await res.json().catch(() => ({}));
+  await recordUsage({ orgId: ctx.orgId, feature: "web_search", agentId: ctx.agentId, runId: ctx.runId, userId: ctx.userId }, "anthropic", model, {
+    input: data?.usage?.input_tokens,
+    output: data?.usage?.output_tokens,
+    cacheRead: data?.usage?.cache_read_input_tokens,
+  });
+  if (!res.ok) throw new Error(`The web search on Anthropic failed: ${data?.error?.message || `HTTP ${res.status}`}`);
+  const text = (data.content || []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n").trim();
+  const sources = new Map<string, { title: string; url: string }>();
+  for (const b of data.content || []) {
+    for (const c of b.citations || []) if (c.url) sources.set(c.url, { title: c.title || c.url, url: c.url });
+    if (b.type === "web_search_tool_result" && Array.isArray(b.content)) for (const r of b.content) if (r.url) sources.set(r.url, { title: r.title || r.url, url: r.url });
+  }
+  return { answer: clip(text, 8000), sources: [...sources.values()].slice(0, 12) };
+}
+
+async function openaiSearch(query: string, ctx: ToolContext, apiKey: string, model: string) {
+  await assertWithinLimits(ctx.orgId, "openai", ctx.agentId);
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model, tools: [{ type: "web_search" }], input: `Search the web and answer factually, citing your sources. Question: ${query}` }),
+    signal: AbortSignal.timeout(90_000),
+  });
+  const data: any = await res.json().catch(() => ({}));
+  await recordUsage({ orgId: ctx.orgId, feature: "web_search", agentId: ctx.agentId, runId: ctx.runId, userId: ctx.userId }, "openai", model, {
+    input: data?.usage?.input_tokens,
+    output: data?.usage?.output_tokens,
+    cacheRead: data?.usage?.input_tokens_details?.cached_tokens,
+  });
+  if (!res.ok) throw new Error(`The web search on OpenAI failed: ${data?.error?.message || `HTTP ${res.status}`}`);
+  let text = "";
+  const sources = new Map<string, { title: string; url: string }>();
+  for (const item of data.output || []) {
+    if (item.type !== "message") continue;
+    for (const c of item.content || []) {
+      if (c.type !== "output_text") continue;
+      text += c.text || "";
+      for (const a of c.annotations || []) if (a.type === "url_citation" && a.url) sources.set(a.url, { title: a.title || a.url, url: a.url });
+    }
+  }
+  return { answer: clip(text.trim(), 8000), sources: [...sources.values()].slice(0, 12) };
+}
+
 /* ── web search on Gemini ──────────────────────────────────── */
 
 /**
- * Web search for an agent that runs on Gemini: Gemini with Google Search
- * grounding, on the workspace's Gemini key. Returns the same shape as the
- * Claude search, with the pages it drew on.
+ * Web search: Gemini with Google Search grounding, on the workspace's Gemini
+ * key. Returns a cited answer and the pages it drew on.
  */
 async function geminiSearch(query: string, ctx: ToolContext) {
-  if (!ctx.apiKey) throw new Error("This agent runs on Gemini, and the workspace has no Gemini key. Add one under Connections.");
+  if (!ctx.apiKey) throw new Error("The workspace has no Gemini key for the web search. Add one under Connections.");
   await assertWithinLimits(ctx.orgId, "gemini", ctx.agentId);
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(ctx.model)}:generateContent`, {
     method: "POST",
@@ -312,48 +401,7 @@ export const TOOLS: ToolDef[] = [
       required: ["query"],
     },
     async run({ query }, ctx) {
-      if (ctx.engine === "gemini") return geminiSearch(String(query || ""), ctx);
-      // A model call of its own, so it is metered and limited like the run that makes it.
-      await assertWithinLimits(ctx.orgId, "anthropic", ctx.agentId);
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": ctx.apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: ctx.model || MODEL,
-          max_tokens: 1500,
-          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }],
-          messages: [
-            {
-              role: "user",
-              content: `Search the web and answer factually with source URLs. Question: ${query}`,
-            },
-          ],
-        }),
-      });
-      const data = await res.json();
-      await recordUsage(
-        { orgId: ctx.orgId, feature: "web_search", agentId: ctx.agentId, runId: ctx.runId, userId: ctx.userId },
-        "anthropic",
-        ctx.model || MODEL,
-        anthropicUsage(data),
-      );
-      if (data.error) throw new Error(data.error.message || "Web search failed");
-      const text = (data.content || [])
-        .filter((b: any) => b.type === "text")
-        .map((b: any) => b.text)
-        .join("\n");
-      const sources = new Set<string>();
-      for (const b of data.content || []) {
-        for (const c of b.citations || []) if (c.url) sources.add(c.url);
-        if (b.type === "web_search_tool_result") {
-          for (const r of b.content || []) if (r.url) sources.add(r.url);
-        }
-      }
-      return { answer: clip(text, 8000), sources: [...sources].slice(0, 12) };
+      return webSearch(String(query || ""), ctx);
     },
   },
 
@@ -1560,12 +1608,12 @@ export const SELECTABLE_TOOLS = TOOLS.filter((t) => !t.implicit);
 export const defaultGate = (risk: Risk) => (risk === "low" ? "auto" : "approval");
 
 /**
- * Anthropic tool-use schema for the tools this agent has been granted.
+ * The tool definitions ({ name, description, input_schema }) for the tools this agent has been granted.
  *
  * @param also  Implicit tool ids the runtime is adding — load_skill when the
  *              agent has skills. A spec can never grant one of these itself.
  */
-export function anthropicTools(granted: { id: string }[], also: string[] = []) {
+export function modelTools(granted: { id: string }[], also: string[] = []) {
   const ids: string[] = [];
   for (const id of [...granted.map((g) => g.id), ...also]) {
     const def = toolById(id);

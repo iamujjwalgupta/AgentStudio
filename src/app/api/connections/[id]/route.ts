@@ -3,10 +3,19 @@ import { q, one } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { decrypt, encrypt } from "@/lib/crypto";
 import { audit } from "@/lib/ai";
-import { missingFor } from "@/lib/connection-types";
-import { anthropicUsage, recordUsage } from "@/lib/metering";
+import { MODEL_KINDS, missingFor } from "@/lib/connection-types";
+import { engineAccess, testModelKey, workspaceKey } from "@/lib/models";
+import type { ProviderId } from "@/lib/providers";
+import { recordUsage } from "@/lib/metering";
 
 export const runtime = "nodejs";
+
+/** Members are told only that it is in use; which key drafting runs on is for admins to see. */
+const IN_USE = "This connection is in use by the workspace. Ask a workspace admin to change or remove it.";
+
+async function isWorkspaceKey(orgId: string, connectionId: string): Promise<boolean> {
+  return (await workspaceKey(orgId))?.connectionId === connectionId;
+}
 
 /**
  * Edits a connection in place, so a wrong URL or an expired token is fixed
@@ -17,6 +26,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const { id } = await params;
   const c = await one<any>(`select id, kind, config, secret_enc from connections where id = $1 and org_id = $2`, [id, u.orgId]);
   if (!c) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // Editing the workspace AI key would change where drafting goes, which is an admin's call.
+  if (!u.canManageMembers && (await isWorkspaceKey(u.orgId, id))) {
+    return NextResponse.json({ error: IN_USE }, { status: 403 });
+  }
   const { name, config, secret } = await req.json().catch(() => ({}));
   // Settings not on the form (a REST connection's extra headers) are kept; only the old health cache goes.
   const { health: _health, ...next }: Record<string, any> = { ...(c.config || {}), ...(config || {}) };
@@ -36,6 +49,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const u = await requireUser();
   const { id } = await params;
+  if (await isWorkspaceKey(u.orgId, id)) {
+    return u.canManageMembers
+      ? NextResponse.json({ error: "This is the workspace AI key. Choose another key under Workspace AI key first, then remove this one." }, { status: 409 })
+      : NextResponse.json({ error: IN_USE }, { status: 403 });
+  }
   const gone = await one<any>(`delete from connections where id = $1 and org_id = $2 returning name, kind`, [id, u.orgId]);
   await audit(u.orgId, u, "Removed connection", "connection", id, gone ? { name: gone.name, kind: gone.kind } : {});
   return NextResponse.json({ ok: true });
@@ -128,32 +146,18 @@ async function testConnection(_: Request, { params }: { params: Promise<{ id: st
     }
     if (c.kind === "gemini") {
       // Listing models proves the key without spending anything.
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(secret)}`, {
+      const res = await fetch("https://generativelanguage.googleapis.com/v1beta/models", {
+        headers: { "x-goog-api-key": secret },
         signal: AbortSignal.timeout(15000),
       });
       if (res.ok) return NextResponse.json({ ok: true, detail: "Key accepted by Google Gemini" });
       return NextResponse.json({ ok: false, detail: res.status === 400 || res.status === 403 ? "The API key was rejected." : `Gemini returned HTTP ${res.status}` });
     }
-    if (c.kind === "anthropic") {
-      const model = c.config?.model?.trim() || process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-api-key": secret, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model, max_tokens: 4, messages: [{ role: "user", content: "Reply with: ok" }] }),
-        signal: AbortSignal.timeout(20000),
-      });
-      if (res.ok) {
-        // A real (tiny) call, so it is recorded; it is not blocked at a limit, since checking a key must always work.
-        const body = await res.json().catch(() => ({}));
-        await recordUsage({ orgId: u.orgId, feature: "key_test", userId: u.id }, "anthropic", model, anthropicUsage(body));
-        return NextResponse.json({ ok: true, detail: `Key accepted · ${model} responded` });
-      }
-      const body = await res.json().catch(() => ({}));
-      const why = body?.error?.message || `HTTP ${res.status}`;
-      return NextResponse.json({
-        ok: false,
-        detail: res.status === 401 ? "The API key was rejected." : res.status === 404 ? `No such model: ${model}` : why,
-      });
+    if (MODEL_KINDS.has(c.kind)) {
+      // The same path an agent run takes, so a pass here means agents can use it.
+      const a = await engineAccess(u.orgId, c.kind as ProviderId, undefined, c.id);
+      const r = await testModelKey(a);
+      return NextResponse.json(r);
     }
     if (c.kind === "msteams") {
       const res = await fetch(secret, {

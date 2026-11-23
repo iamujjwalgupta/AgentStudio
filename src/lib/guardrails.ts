@@ -36,6 +36,7 @@ const EMAIL_REGEX = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b/g;
 const API_KEY_PATTERNS = [
   { name: "Bearer Token", regex: /Bearer\s+[A-Za-z0-9_\-\.]{20,}/g },
   { name: "Anthropic / OpenAI API Key", regex: /\b(sk-(?:ant|proj|live)?[a-zA-Z0-9_\-]{20,})\b/g },
+  { name: "Google API Key", regex: /\b(AIza[0-9A-Za-z_\-]{35})\b/g },
   { name: "GitHub Token", regex: /\b(gh[pousr]_[A-Za-z0-9_]{36,})\b/g },
   { name: "AWS Access Key", regex: /\b(AKIA[0-9A-Z]{16})\b/g },
   { name: "Generic Secret / Key", regex: /(?:api[_-]?key|secret|password|token)["']?\s*[:=]\s*["']([A-Za-z0-9_\-!@#$%^&*]{16,})["']/gi },

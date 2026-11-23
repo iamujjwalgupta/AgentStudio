@@ -9,7 +9,7 @@ Everything runs from **Cloud Shell**, the terminal in the Google Cloud console, 
 | The app (web + scheduler) | Cloud Run service `agent-studio` | One container runs the Next.js app and the scheduler, which ticks `/api/cron` on `127.0.0.1` every minute |
 | Database | Cloud SQL for PostgreSQL 16, instance `agent-studio-db` | Daily backups, point-in-time recovery, deletion protection |
 | Uploaded and generated files | Cloud Storage bucket `<project>-agent-studio-files` | Mounted into the container at `/data/storage` |
-| Secrets | Secret Manager: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `AUTH_SECRET`, `CRON_SECRET` | Generated for you, except the Anthropic key, which you are asked for |
+| Secrets | Secret Manager: `DATABASE_URL`, `AUTH_SECRET`, `CRON_SECRET` | Generated for you. Model keys (Gemini, and optionally Claude, OpenAI, Azure OpenAI or others) are added in the app, under Connections |
 | Container image | Artifact Registry repository `agent-studio` | Built by Cloud Build from the `Dockerfile` |
 | Schema updates | Cloud Run job `agent-studio-migrate` | Runs `db/schema.sql` (idempotent) before each deploy |
 | Access control | Identity-Aware Proxy (IAP) | Only the people or groups you list can reach the app |
@@ -17,7 +17,7 @@ Everything runs from **Cloud Shell**, the terminal in the Google Cloud console, 
 ## Before you start
 
 - A Google Cloud project with **billing enabled**.
-- Your **Anthropic API key**.
+- A **Google Gemini API key** (from Google AI Studio), to add in the app after the first deploy.
 - Know **who should have access**: your company domain, a Google group, or individual emails.
 - Enough permissions. Either you are **Owner** of the project, or you have the roles below and a project admin runs one file for you (see next section).
 
@@ -66,7 +66,7 @@ The trade-off: that account usually has **Editor on the whole project**, so the 
 echo 'SECRETS_MODE="env"' >> deploy/config.sh
 ```
 
-In that mode the values live in `~/.agent-studio-<project>.env` in your Cloud Shell (private to you, outside the project folder). Values that cannot be read back from Secret Manager are regenerated, including a new database password, and the Anthropic key is asked for again. Anyone who can view the Cloud Run service can see environment variables, so prefer Secret Manager once an admin can grant access.
+In that mode the values live in `~/.agent-studio-<project>.env` in your Cloud Shell (private to you, outside the project folder). Missing values are read from the running service first; for a service that does not exist yet they are generated, including a new database password. For an existing service the script stops rather than replace a value it cannot find. Anyone who can view the Cloud Run service can see environment variables, so prefer Secret Manager once an admin can grant access.
 
 To redeploy an image that is already built (for example after a failed deploy) without building again:
 
@@ -105,7 +105,7 @@ Set these three values at the top, then save with `Ctrl+O`, `Enter`, and exit wi
 bash deploy/1-setup-infra.sh
 ```
 
-It enables the APIs and creates the registry, service account, bucket, Cloud SQL instance, database and secrets. Near the end it asks you to **paste your Anthropic API key** (the input is hidden).
+It enables the APIs and creates the registry, service account, bucket, Cloud SQL instance, database and secrets. No model key is asked for: after the first deploy, an admin adds the Gemini key in the app under **Connections**.
 
 Safe to re-run: anything that already exists is left alone.
 
@@ -153,6 +153,16 @@ bash deploy/3-deploy-app.sh
 
 Data, secrets and settings are kept. Each deploy is a new Cloud Run revision; to roll back, open **Cloud Run → agent-studio → Revisions** and send traffic to the previous one.
 
+## Which code is running?
+
+Every image carries a **fingerprint** of the source it was built from: a 12-character code shown at the bottom of the app's left rail (**Build …**) and in `/api/health`. The same code always gives the same fingerprint, so to check a copy against the live app:
+
+```bash
+node scripts/fingerprint.mjs            # in any copy of the code: laptop or Cloud Shell
+```
+
+If the two match, the app is running exactly that code. To see which files differ between two copies, run `node scripts/fingerprint.mjs --list` in each and compare the outputs. Line endings are ignored, so a Windows copy and a Linux copy of the same code match.
+
 ## Everyday commands
 
 ```bash
@@ -164,9 +174,7 @@ gcloud beta iap web add-iam-policy-binding --resource-type=cloud-run \
   --service=agent-studio --region=asia-south1 \
   --member=user:someone@yourcompany.com --role=roles/iap.httpsResourceAccessor
 
-# Change the Anthropic key (the next deploy or restart picks it up)
-printf '%s' 'sk-ant-...' | gcloud secrets versions add ANTHROPIC_API_KEY --data-file=-
-gcloud run services update agent-studio --region asia-south1 --update-labels=restarted=$(date +%s)
+# Change the Gemini key: in the app, Connections → Google Gemini → replace the key (no deploy needed)
 
 # Connect to the database with psql
 gcloud sql connect agent-studio-db --user=postgres --database=agent_studio
@@ -198,10 +206,10 @@ Other notes:
 ## Cost
 
 Roughly, before any free-tier credit:
-- **Cloud Run:** one always-on instance (1 vCPU, 1 GiB), kept on so the scheduler runs.
+- **Cloud Run:** one always-on instance (1 vCPU, 2 GiB), kept on so the scheduler runs.
 - **Cloud SQL:** `db-g1-small` with 10 GB SSD and backups.
 - **Everything else:** storage, Artifact Registry and Secret Manager, which cost little at this scale.
-- **Anthropic API usage:** billed by Anthropic, separately.
+- **Model API usage:** billed by each provider on its own key (Google for Gemini, Anthropic, OpenAI …), separately (see Usage & limits in the app).
 
 Check current prices in the [Google Cloud pricing calculator](https://cloud.google.com/products/calculator) for your region. To stop Cloud Run charges when idle, set `MIN_INSTANCES=0`; scheduled agents then stop firing.
 
@@ -214,7 +222,7 @@ gcloud sql instances patch agent-studio-db --no-deletion-protection
 gcloud sql instances delete agent-studio-db
 gcloud storage rm -r gs://$(gcloud config get-value project)-agent-studio-files
 gcloud artifacts repositories delete agent-studio --location asia-south1
-for s in DATABASE_URL ANTHROPIC_API_KEY AUTH_SECRET CRON_SECRET; do gcloud secrets delete $s; done
+for s in DATABASE_URL AUTH_SECRET CRON_SECRET; do gcloud secrets delete $s; done
 ```
 
 Deleting the Cloud SQL instance deletes its backups too. Export the database first if you may need it.

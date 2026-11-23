@@ -47,9 +47,14 @@ export async function POST(req: Request) {
   const agent = await one<any>(`select * from agents where id = $1 and org_id = $2`, [agentId, u.orgId]);
   if (!agent) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // People can belong to several workspaces. The offer is addressed to the one they
+  // are working in (accepting copies into whichever they are viewing at the time).
   const to = await one<any>(
-    `select u.id, u.name, u.email, u.org_id, o.name as org_name
-       from users u join orgs o on o.id = u.org_id where u.email = $1`,
+    `select u.id, u.name, u.email, o.id as org_id, o.name as org_name
+       from users u
+       left join memberships m on m.user_id = u.id and m.org_id = u.active_org_id
+       join orgs o on o.id = coalesce(m.org_id, u.org_id)
+      where u.email = $1`,
     [String(email).trim().toLowerCase()],
   );
   if (!to) {
@@ -59,7 +64,8 @@ export async function POST(req: Request) {
     );
   }
   if (to.id === u.id) return NextResponse.json({ error: "That is your own account." }, { status: 400 });
-  if (to.org_id === u.orgId) {
+  const sameWorkspace = await one(`select 1 from memberships where user_id = $1 and org_id = $2`, [to.id, u.orgId]);
+  if (sameWorkspace) {
     return NextResponse.json(
       { error: `${to.name} is already in this workspace and can see this agent.` },
       { status: 400 },

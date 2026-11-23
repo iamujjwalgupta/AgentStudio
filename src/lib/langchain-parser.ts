@@ -30,7 +30,7 @@ export const LANGCHAIN_TEMPLATES = [
     blurb: "LangChain ReAct agent with order lookup, CRM updates, and payment refund tools.",
     code: `from langchain.agents import create_react_agent, AgentExecutor
 from langchain_core.tools import tool
-from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 @tool
 def lookup_customer_orders(customer_id: str) -> dict:
@@ -42,7 +42,7 @@ def issue_customer_refund(order_id: str, amount: float, reason: str) -> dict:
     """Authorize refund transaction for an eligible retail return."""
     return {"refund_id": "RF-8821", "status": "approved", "amount": amount}
 
-llm = ChatAnthropic(model="claude-3-5-sonnet-20241022")
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
 tools = [lookup_customer_orders, issue_customer_refund]
 
 prompt = """You are an autonomous customer support agent.
@@ -190,7 +190,7 @@ function parsePythonLangChain(code: string): {
   else if (/customer.*support/i.test(code)) name = "Customer Support ReAct Agent";
 
   // Model
-  let model = "claude-3-5-sonnet-20241022";
+  let model = "gemini-2.5-flash";
   const modelMatch = code.match(/model(?:_name)?\s*=\s*["']([^"']+)["']/i);
   if (modelMatch) model = modelMatch[1].trim();
 
@@ -259,7 +259,7 @@ function parseTypeScriptLangChain(code: string): {
   const nameMatch = code.match(/name\s*:\s*["']([^"']+)["']/i);
   if (nameMatch) name = nameMatch[1].trim();
 
-  let model = "claude-3-5-sonnet-20241022";
+  let model = "gemini-2.5-flash";
   const modelMatch = code.match(/model\s*:\s*["']([^"']+)["']/i);
   if (modelMatch) model = modelMatch[1].trim();
 
@@ -346,7 +346,7 @@ export function parseLangChainAgent(rawSource: string, forcedLanguage?: "python"
       const rawTools = originalSpec?.tools || obj.tools || [];
       parsed = {
         name: originalSpec?.name || obj.name || "LangChain JSON Agent",
-        model: obj.model || "claude-3-5-sonnet-20241022",
+        model: obj.model || "gemini-2.5-flash",
         instruction: originalSpec?.brief || (originalSpec as any)?.instructions || originalSpec?.purpose || obj.instruction || obj.prompt || "",
         tools: rawTools.map((t: any) => {
           const toolId = typeof t === "string" ? t : t.id || t.name || "custom_tool";

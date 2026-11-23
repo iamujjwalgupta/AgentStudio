@@ -357,6 +357,9 @@ process.on("message", async (m) => {
   try {
     if (m.op === "init") {
       const inst = await DuckDBInstance.create(":memory:", {
+        // A query bigger than memory spills to the system temp folder, never the app folder, and only so far.
+        // Set first: once outside access is off, the folder can no longer be chosen.
+        temp_directory: require("path").join(require("os").tmpdir(), "agent-studio-duckdb"), max_temp_directory_size: "1GiB",
         memory_limit: "512MB", threads: "2", enable_external_access: "false",
         autoinstall_known_extensions: "false", autoload_known_extensions: "false", lock_configuration: "true",
       });

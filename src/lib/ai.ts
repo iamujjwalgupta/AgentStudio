@@ -1,11 +1,11 @@
 import { q, one } from "./db";
-import { draftText, type Engine } from "./models";
+import { draftText } from "./models";
 import { SELECTABLE_TOOLS, defaultGate } from "./tools";
 import { skillName, LABEL_MAX, DESCRIPTION_MAX, INSTRUCTIONS_MAX, type SkillRow } from "./skills";
 import { emptySpec, normaliseInputs, type AgentSpec, type SpecInput } from "./types";
 
 // Model keys and engines live in lib/models.ts; re-exported for existing callers.
-export { MODEL, NO_KEY, modelAccess, clientFor, anthropicFor, type ModelAccess } from "./models";
+export { MODEL, NO_KEY, geminiAccess, type ModelAccess } from "./models";
 
 export async function audit(
   orgId: string,
@@ -39,7 +39,6 @@ export async function compileBrief(
   brief: string,
   connections: { id: string; name: string; kind: string; config: any }[],
   userId?: string,
-  engine?: Engine,
 ): Promise<AgentSpec> {
   const connLines = connections.length
     ? connections.map((c) => `- id "${c.id}" · ${c.name} (${c.kind})`).join("\n")
@@ -75,14 +74,13 @@ SCHEMA
 BRIEF
 ${brief}`;
 
-  const { text } = await draftText(orgId, prompt, { engine, maxTokens: 2000, meter: { orgId, feature: "drafting", userId } });
+  const { text } = await draftText(orgId, prompt, { maxTokens: 2000, meter: { orgId, feature: "drafting", userId } });
   const j = extractJSON(text);
 
   const base = emptySpec();
   const validConn = new Set(connections.map((c) => c.id));
   return {
     ...base,
-    ...(engine ? { engine } : {}),
     brief,
     name: j.name || "Untitled agent",
     archetype: ["analyst", "author", "operator", "sentinel"].includes(j.archetype) ? j.archetype : "analyst",

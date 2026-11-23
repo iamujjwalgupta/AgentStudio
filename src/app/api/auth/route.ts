@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { pool, one, q } from "@/lib/db";
 import { createSession, destroySession, hashPassword, verifyPassword } from "@/lib/auth";
 import { audit } from "@/lib/ai";
+import { acceptInvitation, pendingInvitation } from "@/lib/invitations";
 
 export const runtime = "nodejs";
 
@@ -52,7 +53,12 @@ export async function POST(req: Request) {
 
   if (action === "register") {
     const existing = await one(`select id from users where email = $1`, [addr]);
-    if (existing) return NextResponse.json({ error: "That email is already registered. Sign in instead." }, { status: 409 });
+    if (existing) {
+      const error = invite
+        ? "That email already has an account. Sign in to join."
+        : "That email already has an account. Sign in instead. Workspace admins can add another workspace from the workspace menu.";
+      return NextResponse.json({ error }, { status: 409 });
+    }
     if (String(password).length < 8)
       return NextResponse.json({ error: "Use a password of at least 8 characters." }, { status: 400 });
 
@@ -141,13 +147,24 @@ export async function POST(req: Request) {
   recordLoginSuccess(rateLimitKey);
   await createSession(user.id);
   await audit(user.org_id, { id: user.id, name: user.name }, "Signed in", "user", user.id, {});
+
+  // An existing account arriving by an invitation link joins that workspace on sign-in.
+  // A spent or mismatched token doesn't block signing in; any invitation still
+  // waiting for this address shows in the app's banner.
+  const inv = invite ? await pendingInvitation(String(invite), addr) : null;
+  if (inv) {
+    await acceptInvitation(inv, { id: user.id, name: user.name });
+    return NextResponse.json({ ok: true, joined: inv.org_name });
+  }
   return NextResponse.json({ ok: true });
 }
 
 /**
  * GET ?invite=<token>: who an invitation is from, so the sign-in page can say
- * which workspace you are joining. Holding the token is what proves you were
- * invited; an unknown or spent token says only that it is not valid.
+ * which workspace you are joining, and whether the invited address already has
+ * an account (then the page asks them to sign in rather than sign up). Holding
+ * the token is what proves you were invited; an unknown or spent token says only
+ * that it is not valid.
  * Without a token: the database health check.
  */
 export async function GET(req: Request) {
@@ -159,7 +176,14 @@ export async function GET(req: Request) {
       [token],
     );
     if (!inv) return NextResponse.json({ valid: false });
-    return NextResponse.json({ valid: true, email: inv.email, org: inv.org_name, invitedBy: inv.invited_by_name });
+    const account = await one(`select 1 from users where lower(email) = lower($1)`, [inv.email]);
+    return NextResponse.json({
+      valid: true,
+      email: inv.email,
+      org: inv.org_name,
+      invitedBy: inv.invited_by_name,
+      hasAccount: Boolean(account),
+    });
   }
   const rows = await q(`select 1 as ok`);
   return NextResponse.json({ db: rows.length === 1 });
